@@ -6,7 +6,8 @@ from PIL import Image
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import CharacterTextSplitter
+# === التحديث الجديد هنا: استخدام langchain_text_splitters ===
+from langchain_text_splitters import CharacterTextSplitter 
 from langchain_groq import ChatGroq
 
 # ====== إعدادات الصفحة ======
@@ -87,7 +88,8 @@ def get_embeddings():
 @st.cache_resource
 def get_vector_store():
     embed_model = get_embeddings()
-    # غير الأسماء دي لو ملفاتك مختلفة
+    
+    # ⚠️ مهم جداً: تأكد إن أسماء الملفات هنا هي نفس الأسماء اللي انت رافعها على GitHub
     books_list = [
         "Clinical Pharmacology Made Incredibly Easy (3rd Ed.).pdf",
         "Book_2.pdf",
@@ -138,11 +140,11 @@ def ask_smart_assistant(llm, vector_store, query):
 def main():
     llm = get_llm()
 
-    with st.spinner("🧠 جاري تحميل القاعدة الطبية..."):
+    with st.spinner("🧠 جاري تحميل القاعدة الطبية... (أول مرة بتاخد وقت شوية)"):
         vector_store = get_vector_store()
 
     if not vector_store:
-        st.error("❌ لم يتم العثور على ملفات PDF. تأكد من رفعها داخل الريبو.")
+        st.error("❌ لم يتم العثور على ملفات PDF. تأكد إنك رافعها على GitHub ونفس الأسماء مكتوبة في الكود.")
         return
 
     tab1, tab2, tab3, tab4 = st.tabs([
