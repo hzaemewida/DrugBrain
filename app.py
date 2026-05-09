@@ -1,14 +1,12 @@
 import os
+import base64
 import streamlit as st
-import numpy as np
 from PIL import Image
 
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.document_loaders import PyPDFLoader
-# === التحديث الجديد هنا: استخدام langchain_text_splitters ===
-from langchain_text_splitters import CharacterTextSplitter 
 from langchain_groq import ChatGroq
+from langchain_core.messages import HumanMessage
 
 # ====== إعدادات الصفحة ======
 st.set_page_config(
@@ -62,19 +60,22 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ====== تحميل النموذج اللغوي ======
-@st.cache_resource
-def get_llm():
+# ====== جلب API Key ======
+def get_api_key():
     api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
     if not api_key:
-        st.error("❌ لم يتم العثور على GROQ_API_KEY. أضفه في Secrets.")
+        st.error("❌ لم يتم العثور على GROQ_API_KEY. أضفه في إعدادات Secrets.")
         st.stop()
+    return api_key
+
+# ====== تحميل النموذج اللغوي (للنصوص) ======
+@st.cache_resource
+def get_llm():
     return ChatGroq(
-        api_key=api_key,
+        api_key=get_api_key(),
         model_name="llama-3.3-70b-versatile",
         temperature=0.1
     )
-
 
 # ====== تحميل نموذج الـ Embeddings ======
 @st.cache_resource
@@ -83,44 +84,18 @@ def get_embeddings():
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-
-# ====== بناء قاعدة البيانات من ملفات PDF ======
+# ====== تحميل قاعدة البيانات الجاهزة ======
 @st.cache_resource
 def get_vector_store():
     embed_model = get_embeddings()
-    
-    # ⚠️ مهم جداً: تأكد إن أسماء الملفات هنا هي نفس الأسماء اللي انت رافعها على GitHub
-    books_list = [
-        "Clinical Pharmacology Made Incredibly Easy (3rd Ed.).pdf",
-        "Book_2.pdf",
-        "Book_3.pdf"
-    ]
-
-    all_docs = []
-    for path in books_list:
-        if os.path.exists(path):
-            try:
-                loader = PyPDFLoader(path)
-                all_docs.extend(loader.load())
-            except Exception as e:
-                st.warning(f"⚠️ مشكلة في تحميل {path}: {e}")
-
-    if not all_docs:
+    # تحميل القاعدة الجاهزة اللي رفعناها على جيت هاب
+    if os.path.exists("faiss_index"):
+        return FAISS.load_local("faiss_index", embed_model, allow_dangerous_deserialization=True)
+    else:
         return None
 
-    splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    split_docs = splitter.split_documents(all_docs)
-    return FAISS.from_documents(split_docs, embed_model)
 
-
-# ====== تحميل OCR (تحميل كسول لتقليل استهلاك الرام) ======
-@st.cache_resource
-def get_ocr_reader():
-    import easyocr
-    return easyocr.Reader(['en'], gpu=False)
-
-
-# ====== دالة الإجابة الذكية ======
+# ====== دوال المساعدة ======
 def ask_smart_assistant(llm, vector_store, query):
     docs = vector_store.similarity_search(query, k=3)
     context = "\n".join([d.page_content for d in docs])
@@ -135,16 +110,33 @@ def ask_smart_assistant(llm, vector_store, query):
     response = llm.invoke(full_prompt)
     return response.content
 
+def encode_image(uploaded_file):
+    return base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
+
+# دالة تحليل الصور باستخدام Groq Vision (بديل قوي لـ EasyOCR وبدون استهلاك رام)
+def analyze_image_with_vision(image_base64, prompt):
+    chat = ChatGroq(
+        api_key=get_api_key(), 
+        model_name="llama-3.2-11b-vision-preview", # موديل الرؤية المجاني من Groq
+        temperature=0.1
+    )
+    msg = HumanMessage(content=[
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
+    ])
+    response = chat.invoke([msg])
+    return response.content
+
 
 # ====== التطبيق الرئيسي ======
 def main():
     llm = get_llm()
 
-    with st.spinner("🧠 جاري تحميل القاعدة الطبية... (أول مرة بتاخد وقت شوية)"):
+    with st.spinner("🧠 جاري تحميل القاعدة الطبية..."):
         vector_store = get_vector_store()
 
     if not vector_store:
-        st.error("❌ لم يتم العثور على ملفات PDF. تأكد إنك رافعها على GitHub ونفس الأسماء مكتوبة في الكود.")
+        st.error("❌ لم يتم العثور على مجلد 'faiss_index'. تأكد من رفعه على GitHub.")
         return
 
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -163,22 +155,15 @@ def main():
             key="rx"
         )
         if up_file and st.button("🚀 تحليل الروشتة"):
-            with st.spinner("👀 جاري تحميل محرك القراءة..."):
-                reader = get_ocr_reader()
-            with st.spinner("👀 جاري قراءة الروشتة..."):
-                img = Image.open(up_file)
-                img_np = np.array(img)
-                results = reader.readtext(img_np, detail=0)
-                raw_ocr_text = " ".join(results)
-
-            with st.spinner("🧠 جاري التحليل الطبي..."):
-                q = (
-                    f"النص ده من روشتة مريض: '{raw_ocr_text}'. "
-                    "استنتج الأدوية الصح، استخداماتها، التشخيص، "
+            with st.spinner("👀 جاري قراءة وتحليل الروشتة بالذكاء الاصطناعي..."):
+                img_base64 = encode_image(up_file)
+                prompt = (
+                    "أنت صيدلي خبير. اقرأ هذه الروشتة الطبية جيداً. "
+                    "استنتج الأدوية المكتوبة، استخداماتها، والتشخيص المحتمل، "
                     "واقترح تحاليل طبية ضرورية لو الحالة تستدعي. "
                     "اكتب تقرير منظم باللهجة المصرية."
                 )
-                ans = ask_smart_assistant(llm, vector_store, q)
+                ans = analyze_image_with_vision(img_base64, prompt)
                 st.markdown(
                     f"<div class='report-card'><h3>🩺 تقرير الروشتة:</h3>{ans}</div>",
                     unsafe_allow_html=True
@@ -189,11 +174,7 @@ def main():
         q = st.text_input("اسأل عن أي دواء:")
         if q and st.button("🔍 بحث"):
             with st.spinner("📚 جاري البحث في المراجع..."):
-                ans = ask_smart_assistant(
-                    llm,
-                    vector_store,
-                    f"أجب باللهجة المصرية: {q}"
-                )
+                ans = ask_smart_assistant(llm, vector_store, f"أجب باللهجة المصرية: {q}")
                 st.markdown(
                     f"<div class='report-card'>🤖 <b>الإجابة:</b><br>{ans}</div>",
                     unsafe_allow_html=True
@@ -207,8 +188,7 @@ def main():
             with st.spinner("🚨 جاري البحث عن التفاعلات..."):
                 q = (
                     f"ابحث عن التفاعلات الدوائية بين: {drugs_input}. "
-                    "هل يوجد تعارض خطير؟ وما البديل؟ "
-                    "الرد باللهجة المصرية."
+                    "هل يوجد تعارض خطير؟ وما البديل؟ الرد باللهجة المصرية."
                 )
                 ans = ask_smart_assistant(llm, vector_store, q)
                 st.markdown(
@@ -225,22 +205,14 @@ def main():
             key="lab"
         )
         if lab_file and st.button("🧬 قراءة النتيجة"):
-            with st.spinner("🔍 جاري تحميل محرك القراءة..."):
-                reader = get_ocr_reader()
-            with st.spinner("🔍 جاري تحليل النتائج..."):
-                img = Image.open(lab_file)
-                img_np = np.array(img)
-                results = reader.readtext(img_np, detail=0)
-                lab_text = " ".join(results)
-
-            with st.spinner("💡 جاري اقتراح الأدوية..."):
-                q = (
-                    f"هذا نص من نتيجة تحليل: '{lab_text}'. "
+            with st.spinner("🔍 جاري قراءة وتحليل النتائج بالذكاء الاصطناعي..."):
+                img_base64 = encode_image(lab_file)
+                prompt = (
+                    "أنت طبيب باطني خبير. اقرأ نتيجة التحليل الطبي في هذه الصورة. "
                     "استخرج القيم غير الطبيعية، استنتج التشخيص، "
-                    "واقترح الأدوية العلمية المناسبة للحالة "
-                    "مع نصيحة للمريض باللهجة المصرية."
+                    "واقترح الأدوية العلمية المناسبة للحالة مع نصيحة للمريض باللهجة المصرية."
                 )
-                ans = ask_smart_assistant(llm, vector_store, q)
+                ans = analyze_image_with_vision(img_base64, prompt)
                 st.markdown(
                     f"<div class='report-card'><h3>🩸 تقرير التحليل والعلاج:</h3>{ans}</div>",
                     unsafe_allow_html=True
