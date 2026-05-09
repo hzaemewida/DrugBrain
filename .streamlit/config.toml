@@ -1,0 +1,8 @@
+[server]
+maxUploadSize = 10
+enableWebsocketCompression = false
+# ✅ الأهم - بيحل مشكلة الـ timeout
+maxMessageSize = 200
+
+[browser]
+gatherUsageStats = false
