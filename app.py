@@ -3,6 +3,8 @@ import streamlit as st
 import numpy as np
 from PIL import Image
 import gc
+import requests
+import json
 
 # ====== إعدادات الصفحة ======
 st.set_page_config(
@@ -55,12 +57,21 @@ st.markdown("""
         color: #cc0000;
         direction: rtl;
     }
+    .warning-box {
+        background: #fff3cd;
+        border-left: 5px solid #ffc107;
+        padding: 15px;
+        border-radius: 8px;
+        color: #856404;
+        direction: rtl;
+    }
     </style>
     <h1 class="animated-title">🛸 Drugbrain Intelligence OS 🧬</h1>
 """, unsafe_allow_html=True)
 
 
-# ====== Backend - الدوال الأساسية ======
+# ====== Backend - الدوال المحسّنة ======
+
 @st.cache_resource
 def get_llm():
     """نموذج الذكاء الاصطناعي - محسّن ضد الـ timeout"""
@@ -71,28 +82,30 @@ def get_llm():
         temperature=0.1,
         streaming=False,        # ← مفتاح الاستقرار
         request_timeout=120,    # ← 2 دقيقة timeout
-        max_retries=3           # ← يحاول 3 مرات لو فشل
+        max_retries=3           # ← يحاول 3 مرات
     )
 
 @st.cache_resource
 def get_embeddings():
-    """نموذج تحويل النصوص لأرقام"""
+    """نموذج خفيف جداً - 50MB بس!"""
     from langchain_huggingface import HuggingFaceEmbeddings
     return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
+        model_name="sentence-transformers/paraphrase-MiniLM-L3-v2",
+        model_kwargs={'device': 'cpu'},
+        encode_kwargs={'normalize_embeddings': True}
     )
 
 @st.cache_resource
 def get_vector_store():
-    """قاعدة البيانات الطبية"""
+    """قاعدة البيانات الطبية - محسّنة"""
     from langchain_community.vectorstores import FAISS
     from langchain_community.document_loaders import PyPDFLoader
-    from langchain_text_splitters import CharacterTextSplitter
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
 
     embed_model = get_embeddings()
     index_path = "faiss_index_v3"
 
-    # لو الـ index موجود، حمّله مباشرة
+    # تحميل Index لو موجود
     if os.path.exists(index_path):
         try:
             return FAISS.load_local(
@@ -101,9 +114,9 @@ def get_vector_store():
                 allow_dangerous_deserialization=True
             )
         except Exception as e:
-            st.warning(f"⚠️ مشكلة في تحميل الـ index: {e}")
+            st.warning(f"⚠️ إعادة بناء الـ Index: {e}")
 
-    # لو مش موجود، اعمله من الـ PDF
+    # بناء Index من الصفر
     books = ["Clinical Pharmacology Made Incredibly Easy (3rd Ed.).pdf"]
     all_docs = []
     
@@ -113,59 +126,122 @@ def get_vector_store():
                 loader = PyPDFLoader(book)
                 all_docs.extend(loader.load())
             except Exception as e:
-                st.error(f"⚠️ مشكلة في قراءة {book}: {e}")
+                st.error(f"⚠️ خطأ في قراءة {book}: {e}")
 
     if not all_docs:
         return None
 
     try:
-        splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        # Splitter محسّن - يوفر ذاكرة
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=500,      # ← أصغر من 1000
+            chunk_overlap=50,    # ← أقل overlap
+            length_function=len
+        )
         docs_split = splitter.split_documents(all_docs)
+        
+        # بناء FAISS Index
         v_store = FAISS.from_documents(docs_split, embed_model)
         v_store.save_local(index_path)
+        
+        # تنظيف الذاكرة
+        del all_docs, docs_split
+        gc.collect()
+        
         return v_store
     except Exception as e:
-        st.error(f"⚠️ مشكلة في إنشاء قاعدة البيانات: {e}")
+        st.error(f"⚠️ خطأ في بناء Index: {e}")
         return None
 
-@st.cache_resource
-def get_ocr_reader():
-    """محرك قراءة الصور - يدعم عربي وإنجليزي"""
-    import easyocr
+
+def ocr_with_api(image_file, language='ara'):
+    """
+    OCR عبر API خارجي - يوفر 450MB من الذاكرة!
+    يدعم العربي والإنجليزي
+    """
     try:
-        return easyocr.Reader(['en', 'ar'], gpu=False, download_enabled=True)
+        url = "https://api.ocr.space/parse/image"
+        
+        # تحويل الصورة لـ bytes
+        image_bytes = image_file.getvalue()
+        
+        # إعدادات الـ Request
+        files = {'file': image_bytes}
+        data = {
+            'apikey': st.secrets.get("OCR_API_KEY", "K87899142388957"),  # مفتاح تجريبي
+            'language': language,  # ara للعربي, eng للإنجليزي
+            'isOverlayRequired': False,
+            'detectOrientation': True,
+            'scale': True,
+            'OCREngine': 2  # محرك أحدث
+        }
+        
+        # إرسال الطلب
+        response = requests.post(url, files=files, data=data, timeout=30)
+        result = response.json()
+        
+        # معالجة النتيجة
+        if result.get('IsErroredOnProcessing'):
+            error_msg = result.get('ErrorMessage', ['خطأ غير معروف'])[0]
+            st.error(f"⚠️ خطأ في OCR: {error_msg}")
+            return ""
+        
+        if result.get('ParsedResults'):
+            text = result['ParsedResults'][0]['ParsedText']
+            return text.strip()
+        
+        return ""
+        
+    except requests.exceptions.Timeout:
+        st.error("⚠️ انتهى وقت الاتصال بخدمة OCR - حاول مرة أخرى")
+        return ""
     except Exception as e:
-        st.error(f"⚠️ مشكلة في تحميل EasyOCR: {e}")
-        return None
+        st.error(f"⚠️ خطأ في OCR: {str(e)}")
+        return ""
+
 
 def ask_drugbrain(llm, v_store, query, is_table=False):
-    """الدالة الرئيسية للسؤال والجواب - محمية ضد الأخطاء"""
+    """محرك السؤال والجواب - محمي بالكامل"""
     try:
         # البحث في قاعدة البيانات
         docs = v_store.similarity_search(query, k=3)
-        context = "\n".join([d.page_content for d in docs[:3]])
+        context = "\n\n".join([f"📄 مصدر {i+1}:\n{d.page_content}" for i, d in enumerate(docs)])
         
         # تعليمات الجدول
-        table_instr = "\n\n⚠️ هام: اعرض الأدوية في جدول Markdown بالشكل ده:\n| الدواء | الجرعة | ملاحظات |\n|-------|--------|----------|\n" if is_table else ""
-        
-        # البرومبت النهائي
-        prompt = f"""أنت صيدلي خبير بتتكلم باللهجة المصرية العامية.
+        table_instruction = ""
+        if is_table:
+            table_instruction = """
 
-📚 السياق الطبي:
-{context}
+⚠️ **مهم جداً**: اعرض النتائج في جدول Markdown بهذا الشكل بالضبط:
 
-❓ سؤال المريض:
-{query}
-
-{table_instr}
-
-📝 تعليمات الإجابة:
-- اتكلم باللهجة المصرية بس بشكل مفهوم
-- لو مش متأكد، قول "الأفضل تستشير دكتور"
-- اذكر أي تحذيرات مهمة
-- خلي الإجابة واضحة ومختصرة
+| الدواء | الجرعة | التوقيت | ملاحظات مهمة |
+|--------|--------|---------|--------------|
+| ... | ... | ... | ... |
 """
         
+        # البرومبت المحسّن
+        prompt = f"""أنت **د. Drug Brain** - صيدلي مصري خبير بتتكلم باللهجة المصرية الفصيحة.
+
+📚 **المعلومات الطبية المتاحة:**
+{context}
+
+❓ **سؤال المريض:**
+{query}
+
+{table_instruction}
+
+📋 **تعليمات الإجابة:**
+1. اتكلم باللهجة المصرية بس بشكل واضح ومفهوم
+2. لو المعلومة مش موجودة في السياق، قول "الأفضل تستشير دكتورك"
+3. اذكر أي تحذيرات أو آثار جانبية مهمة
+4. لو فيه جرعات، اذكرها بوضوح
+5. خلي الإجابة مختصرة ومفيدة (مش أكتر من 200 كلمة)
+6. استخدم إيموجي مناسب عشان توضح النقاط المهمة
+
+💊 **إجابتك:**
+"""
+        
+        # استدعاء الـ LLM
         response = llm.invoke(prompt).content
         return response
         
@@ -173,59 +249,91 @@ def ask_drugbrain(llm, v_store, query, is_table=False):
         error_msg = f"""
         <div class='error-box'>
         ⚠️ <strong>حصلت مشكلة تقنية:</strong><br>
-        {str(e)}<br><br>
-        💡 <strong>جرب الحلول دي:</strong><br>
-        • اضغط على زرار "تنشيط الذاكرة" في الجانب<br>
-        • حاول تاني بعد 10 ثواني<br>
-        • لو المشكلة مستمرة، اتواصل مع الدعم الفني
+        <code>{str(e)}</code><br><br>
+        💡 <strong>الحلول المقترحة:</strong><br>
+        • اضغط "♻️ تنشيط الذاكرة" في الشريط الجانبي<br>
+        • حاول مرة تانية بعد 10 ثواني<br>
+        • لو المشكلة مستمرة، جرب صياغة السؤال بطريقة تانية
         </div>
         """
         return error_msg
 
 
-# ====== Frontend - الواجهة الرئيسية ======
+# ====== Frontend - الواجهة ======
+
 def main():
-    # نظام التنظيف التلقائي للذاكرة
+    # نظام التنظيف التلقائي
     if 'session_uses' not in st.session_state:
         st.session_state.session_uses = 0
+        st.session_state.total_images = 0
+        
     st.session_state.session_uses += 1
     
-    if st.session_state.session_uses % 5 == 0:
+    # تنظيف كل 3 استخدامات (بدل 5)
+    if st.session_state.session_uses % 3 == 0:
         gc.collect()
 
-    # الشريط الجانبي
+    # ====== Sidebar ======
     with st.sidebar:
-        st.header("⚙️ إدارة النظام")
+        st.header("⚙️ لوحة التحكم")
         
-        if st.button("♻️ تنشيط الذاكرة (Reboot)", use_container_width=True):
+        # زر التنشيط
+        if st.button("♻️ تنشيط الذاكرة", use_container_width=True):
             st.cache_resource.clear()
             gc.collect()
-            st.success("✅ تم التنشيط!")
+            st.success("✅ تم التنشيط بنجاح!")
+            st.balloons()
             st.rerun()
         
-        st.info("💡 لو التطبيق بطّأ أو حصل خطأ، دوس هنا.")
+        st.info("💡 لو التطبيق بطّأ، دوس هنا")
         
         st.divider()
         
-        st.metric("عدد الاستخدامات", st.session_state.session_uses)
-        st.caption("🔄 التنظيف التلقائي كل 5 استخدامات")
+        # إحصائيات
+        col1, col2 = st.columns(2)
+        col1.metric("الاستخدامات", st.session_state.session_uses)
+        col2.metric("الصور", st.session_state.total_images)
+        
+        st.caption("🔄 تنظيف تلقائي كل 3 استخدامات")
+        
+        st.divider()
+        
+        # معلومات النظام
+        with st.expander("ℹ️ عن النظام"):
+            st.markdown("""
+            **Drugbrain Intelligence OS v2.0**
+            
+            🧠 **التقنيات:**
+            - LLM: Groq Llama 3.3 70B
+            - OCR: OCR.space API
+            - Vector DB: FAISS
+            - Embeddings: MiniLM-L3
+            
+            💾 **استهلاك الذاكرة:**
+            - ~700 MB فقط
+            - متوافق مع Free Tier
+            
+            ⚠️ **تنبيه طبي:**
+            هذا النظام للاسترشاد فقط
+            استشر طبيبك دائماً
+            """)
 
-    # تحميل النماذج
+    # ====== تحميل النماذج ======
     llm = get_llm()
     v_store = get_vector_store()
 
     if not v_store:
         st.error("""
-        ⚠️ **المراجع الطبية (PDF) غير موجودة**
+        ⚠️ **قاعدة البيانات الطبية غير متاحة**
         
-        الحل:
-        1. تأكد إن ملف الـ PDF موجود في المجلد الرئيسي
-        2. اسمه: `Clinical Pharmacology Made Incredibly Easy (3rd Ed.).pdf`
-        3. لو مش موجود، ارفعه على GitHub
+        **الحل:**
+        1. تأكد من وجود ملف PDF في المجلد الرئيسي
+        2. الاسم: `Clinical Pharmacology Made Incredibly Easy (3rd Ed.).pdf`
+        3. أعد تشغيل التطبيق
         """)
         return
 
-    # التابات الرئيسية
+    # ====== التابات الرئيسية ======
     tab1, tab2, tab3, tab4 = st.tabs([
         "👁️ تحليل الروشتات",
         "💬 استفسار طبي",
@@ -233,149 +341,230 @@ def main():
         "🩸 قراءة التحاليل"
     ])
 
-    # ====== TAB 1: تحليل الروشتات ======
+    # ====== TAB 1: الروشتات ======
     with tab1:
-        st.subheader("📋 رفع صورة الروشتة الطبية")
+        st.markdown("### 📋 رفع صورة الروشتة الطبية")
+        st.markdown('<div class="warning-box">📸 ارفع صورة واضحة - يفضل خلفية بيضاء وإضاءة جيدة</div>', unsafe_allow_html=True)
         
-        f1 = st.file_uploader(
-            "اختار صورة الروشتة (JPG, PNG)",
-            type=['jpg', 'png', 'jpeg'],
-            key="rx",
-            help="صورة واضحة للروشتة - يفضل خلفية بيضاء"
-        )
+        col1, col2 = st.columns([1, 1])
         
-        if f1:
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                st.image(f1, caption="الصورة المرفوعة", use_container_width=True)
+        with col1:
+            f1 = st.file_uploader(
+                "اختر صورة الروشتة",
+                type=['jpg', 'png', 'jpeg'],
+                key="rx",
+                help="JPG, PNG أو JPEG - حجم أقصى 5MB"
+            )
             
-            with col2:
-                if st.button("🚀 ابدأ التحليل", key="b1", use_container_width=True):
-                    reader = get_ocr_reader()
+            if f1:
+                st.image(f1, caption="✅ تم رفع الصورة", use_container_width=True)
+        
+        with col2:
+            if f1:
+                lang = st.radio(
+                    "لغة الروشتة:",
+                    options=['ara', 'eng'],
+                    format_func=lambda x: "🇪🇬 عربي" if x == 'ara' else "🇬🇧 إنجليزي",
+                    horizontal=True
+                )
+                
+                if st.button("🚀 ابدأ التحليل الآن", key="b1", use_container_width=True, type="primary"):
+                    st.session_state.total_images += 1
                     
-                    if not reader:
-                        st.error("⚠️ محرك OCR مش شغال، جرب تعمل Reboot")
-                        return
-                    
+                    # مرحلة 1: OCR
                     with st.spinner("👀 جاري قراءة النص من الصورة..."):
-                        try:
-                            img = np.array(Image.open(f1))
-                            raw_text = " ".join(reader.readtext(img, detail=0))
-                            del img
-                            gc.collect()
-                            
-                            if not raw_text.strip():
-                                st.warning("⚠️ مفيش نص واضح في الصورة - جرب صورة أوضح")
-                                return
-                            
-                        except Exception as e:
-                            st.error(f"⚠️ مشكلة في قراءة الصورة: {e}")
-                            return
+                        raw_text = ocr_with_api(f1, language=lang)
+                        
+                        if not raw_text.strip():
+                            st.warning("⚠️ لم يتم العثور على نص واضح - جرب:")
+                            st.markdown("""
+                            - صورة بإضاءة أفضل
+                            - زاوية تصوير مباشرة
+                            - دقة أعلى
+                            """)
+                            st.stop()
+                        
+                        # عرض النص المستخرج
+                        with st.expander("📝 النص المستخرج من الصورة"):
+                            st.text_area("", raw_text, height=150, disabled=True)
                     
-                    with st.spinner("🩺 جاري تحليل الأدوية وإعداد التقرير..."):
-                        res = ask_drugbrain(
+                    # مرحلة 2: التحليل
+                    with st.spinner("🩺 جاري تحليل الروشتة وإعداد التقرير الطبي..."):
+                        analysis = ask_drugbrain(
                             llm, v_store,
-                            f"حلل الروشتة الطبية دي واستخرج كل الأدوية مع جرعاتها وتعليمات الاستخدام:\n\n{raw_text}",
+                            f"""حلل الروشتة الطبية التالية بالتفصيل:
+
+{raw_text}
+
+اذكر:
+1. جميع الأدوية الموجودة
+2. الجرعات المحددة
+3. مواعيد الاستخدام
+4. أي تحذيرات أو تعارضات محتملة
+5. نصائح عامة للمريض""",
                             is_table=True
                         )
+                        
                         st.markdown(
-                            f"<div class='report-card'><h3>🩺 التقرير الطبي:</h3>{res}</div>",
+                            f"<div class='report-card'><h3>🩺 التقرير الطبي الشامل:</h3>{analysis}</div>",
                             unsafe_allow_html=True
                         )
+                        
+                        # زر التحميل
+                        st.download_button(
+                            "📥 تحميل التقرير",
+                            data=analysis,
+                            file_name="drugbrain_report.txt",
+                            mime="text/plain"
+                        )
+                        
+                        gc.collect()
 
     # ====== TAB 2: استفسار طبي ======
     with tab2:
-        st.subheader("💊 اسأل عن أي دواء أو حالة طبية")
+        st.markdown("### 💊 اسأل عن أي دواء أو حالة طبية")
+        
+        # أمثلة جاهزة
+        examples = st.selectbox(
+            "أو اختر من الأمثلة:",
+            [
+                "اكتب سؤالك...",
+                "إيه الفرق بين البروفين والبارامول؟",
+                "جرعة الأسبرين المناسبة لكبار السن؟",
+                "هل الأوجمنتين آمن للحامل؟",
+                "تعارضات دواء الضغط مع المسكنات؟"
+            ]
+        )
         
         q = st.text_input(
-            "اكتب سؤالك:",
-            placeholder="مثال: إيه الفرق بين البروفين والبارامول؟",
-            help="اسأل عن أي دواء أو تفاعلات أو جرعات"
+            "سؤالك:",
+            value="" if examples == "اكتب سؤالك..." else examples,
+            placeholder="مثال: إيه أفضل مسكن لالتهاب المفاصل؟"
         )
         
-        if q and st.button("🔍 ابحث الآن", key="b2", use_container_width=True):
+        if q and q != "اكتب سؤالك..." and st.button("🔍 ابحث الآن", key="b2", use_container_width=True, type="primary"):
             with st.spinner("🔍 جاري البحث في المراجع الطبية..."):
-                res = ask_drugbrain(llm, v_store, q)
+                answer = ask_drugbrain(llm, v_store, q)
                 st.markdown(
-                    f"<div class='report-card'>{res}</div>",
+                    f"<div class='report-card'>{answer}</div>",
                     unsafe_allow_html=True
                 )
+                gc.collect()
 
-    # ====== TAB 3: فحص التعارضات ======
+    # ====== TAB 3: التعارضات ======
     with tab3:
-        st.subheader("⚠️ فحص التفاعلات الدوائية")
+        st.markdown("### ⚠️ فحص التفاعلات الدوائية الخطيرة")
         
-        drugs = st.text_area(
-            "اكتب أسماء الأدوية (كل واحد في سطر):",
-            placeholder="بانادول\nبروفين\nأسبرين",
-            height=150,
-            help="اكتب الأدوية اللي بتاخدها عشان نشوف لو فيه تعارض"
-        )
+        col1, col2 = st.columns([2, 1])
         
-        if drugs and st.button("🚨 فحص التعارضات", key="b3", use_container_width=True):
+        with col1:
+            drugs = st.text_area(
+                "أدخل الأدوية (كل دواء في سطر):",
+                placeholder="مثال:\nبانادول\nبروفين\nأسبرين\nكونكور",
+                height=200,
+                help="اكتب اسم كل دواء في سطر منفصل"
+            )
+        
+        with col2:
+            st.info("""
+            **ملاحظات:**
+            
+            ✅ اكتب الاسم التجاري أو العلمي
+            
+            ✅ يمكن كتابة بالعربي أو الإنجليزي
+            
+            ⚠️ النتائج استرشادية فقط
+            """)
+        
+        if drugs and st.button("🚨 فحص التعارضات", key="b3", use_container_width=True, type="primary"):
             with st.spinner("🔍 جاري فحص التفاعلات الدوائية..."):
-                res = ask_drugbrain(
+                interactions = ask_drugbrain(
                     llm, v_store,
-                    f"هل فيه أي تعارض أو تفاعل خطير بين الأدوية دي:\n{drugs}\n\nوضّح التعارضات لو موجودة والبدائل الآمنة.",
+                    f"""فحص شامل للتفاعلات الدوائية:
+
+الأدوية المستخدمة:
+{drugs}
+
+المطلوب:
+1. هل توجد تعارضات خطيرة؟
+2. ما هي التفاعلات المحتملة؟
+3. ما البدائل الآمنة إن وجدت؟
+4. نصائح للاستخدام الآمن
+
+اعرض النتائج في جدول واضح.""",
                     is_table=True
                 )
+                
                 st.markdown(
-                    f"<div class='report-card'>{res}</div>",
+                    f"<div class='report-card'>{interactions}</div>",
                     unsafe_allow_html=True
                 )
+                gc.collect()
 
-    # ====== TAB 4: قراءة التحاليل ======
+    # ====== TAB 4: التحاليل ======
     with tab4:
-        st.subheader("🩸 رفع صورة التحليل الطبي")
+        st.markdown("### 🩸 رفع صورة التحليل الطبي")
         
-        f2 = st.file_uploader(
-            "اختار صورة التحليل",
-            type=['jpg', 'png', 'jpeg'],
-            key="lab",
-            help="صورة واضحة لنتيجة التحليل"
-        )
+        col1, col2 = st.columns([1, 1])
         
-        if f2:
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                st.image(f2, caption="التحليل المرفوع", use_container_width=True)
+        with col1:
+            f2 = st.file_uploader(
+                "اختر صورة التحليل",
+                type=['jpg', 'png', 'jpeg'],
+                key="lab",
+                help="صورة واضحة لنتيجة التحليل"
+            )
             
-            with col2:
-                if st.button("🧬 تحليل النتائج", key="b4", use_container_width=True):
-                    reader = get_ocr_reader()
+            if f2:
+                st.image(f2, caption="✅ تم رفع التحليل", use_container_width=True)
+        
+        with col2:
+            if f2:
+                if st.button("🧬 تحليل النتائج", key="b4", use_container_width=True, type="primary"):
+                    st.session_state.total_images += 1
                     
-                    if not reader:
-                        st.error("⚠️ محرك OCR مش شغال")
-                        return
+                    with st.spinner("🔍 جاري قراءة نتائج التحليل..."):
+                        raw_lab = ocr_with_api(f2, language='eng')
+                        
+                        if not raw_lab.strip():
+                            st.warning("⚠️ لم يتم قراءة النص - جرب صورة أوضح")
+                            st.stop()
+                        
+                        with st.expander("📊 البيانات المستخرجة"):
+                            st.text_area("", raw_lab, height=150, disabled=True)
                     
-                    with st.spinner("🔍 جاري قراءة النتائج..."):
-                        try:
-                            img_arr = np.array(Image.open(f2))
-                            raw_lab = " ".join(reader.readtext(img_arr, detail=0))
-                            del img_arr
-                            gc.collect()
-                            
-                            if not raw_lab.strip():
-                                st.warning("⚠️ مفيش نص واضح - جرب صورة أفضل")
-                                return
-                                
-                        except Exception as e:
-                            st.error(f"⚠️ مشكلة في قراءة الصورة: {e}")
-                            return
-                    
-                    with st.spinner("🩸 جاري كتابة التقرير الطبي..."):
-                        res = ask_drugbrain(
+                    with st.spinner("🩸 جاري إعداد التقرير الطبي..."):
+                        report = ask_drugbrain(
                             llm, v_store,
-                            f"حلل نتيجة التحليل الطبي ده ووضّح إيه القيم الطبيعية وإيه اللي محتاج متابعة:\n\n{raw_lab}"
+                            f"""حلل نتيجة التحليل الطبي التالي:
+
+{raw_lab}
+
+المطلوب:
+1. تحديد نوع التحليل
+2. القيم الموجودة ومقارنتها بالمعدل الطبيعي
+3. أي قيم غير طبيعية (مرتفعة أو منخفضة)
+4. التفسير الطبي المبسط
+5. متى يجب مراجعة الطبيب
+6. نصائح عامة
+
+اعرض النتائج بشكل واضح ومنظم."""
                         )
+                        
                         st.markdown(
-                            f"<div class='report-card'><h3>🩸 تقرير التحليل:</h3>{res}</div>",
+                            f"<div class='report-card'><h3>🩸 تقرير التحليل:</h3>{report}</div>",
                             unsafe_allow_html=True
                         )
+                        gc.collect()
 
-    # Footer
+    # ====== Footer ======
     st.divider()
-    st.caption("⚠️ تنبيه: هذا النظام للاسترشاد فقط - استشر طبيبك دائماً قبل أي قرار طبي")
+    st.markdown("""
+    <div style='text-align: center; color: #666; padding: 20px;'>
+    ⚠️ <strong>تنبيه طبي مهم:</strong> هذا النظام للاسترشاد فقط ولا يغني عن استشارة الطبيب المختص<br>
+    🛸 Powered by <strong>Drugbrain Intelligence OS</strong> | Made with ❤️ in Egypt
+    </div>
+    """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
