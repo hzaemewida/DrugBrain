@@ -1,5 +1,12 @@
 streamlit
-groq
 langchain
+langchain-community
 langchain-groq
+langchain-huggingface
+sentence-transformers
+faiss-cpu
+pypdf
+easyocr
+opencv-python-headless
+numpy
 Pillow
