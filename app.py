@@ -1,8 +1,8 @@
 import os
 import base64
 import streamlit as st
+from groq import Groq
 from langchain_groq import ChatGroq
-from langchain_core.messages import HumanMessage
 
 # ===== إعداد الصفحة =====
 st.set_page_config(
@@ -11,6 +11,7 @@ st.set_page_config(
     page_icon="🛸"
 )
 
+# ===== العنوان =====
 st.markdown("""
 <h1 style='text-align:center;
 background: linear-gradient(90deg,#7f00ff,#00d2ff);
@@ -24,11 +25,14 @@ font-size:3rem;'>
 # ===== API KEY =====
 def get_api_key():
     api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
+
     if not api_key:
-        st.error("❌ لم يتم العثور على GROQ_API_KEY. أضفه في Secrets.")
+        st.error("❌ لم يتم العثور على GROQ_API_KEY")
         st.stop()
+
     return api_key
 
+# ===== موديل النصوص =====
 @st.cache_resource
 def get_text_model():
     return ChatGroq(
@@ -37,35 +41,52 @@ def get_text_model():
         temperature=0.1
     )
 
-@st.cache_resource
-def get_vision_model():
-    return ChatGroq(
-        api_key=get_api_key(),
-        model_name="llama-3.2-90b-vision-preview",
-        temperature=0.1
+# ===== أسئلة النصوص =====
+def ask_text_model(prompt):
+
+    model = get_text_model()
+
+    response = model.invoke(prompt)
+
+    return response.content
+
+# ===== تحليل الصور =====
+def ask_vision_model(uploaded_file, prompt):
+
+    client = Groq(
+        api_key=get_api_key()
     )
 
-def ask_text_model(prompt):
-    model = get_text_model()
-    response = model.invoke(prompt)
-    return response.content
+    img_base64 = base64.b64encode(
+        uploaded_file.getvalue()
+    ).decode("utf-8")
 
-def encode_image(uploaded_file):
-    return base64.b64encode(uploaded_file.getvalue()).decode()
+    completion = client.chat.completions.create(
+        model="llama-3.2-90b-vision-preview",
 
-def ask_vision_model(uploaded_file, prompt):
-    model = get_vision_model()
-    img_base64 = encode_image(uploaded_file)
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{img_base64}"
+                        }
+                    }
+                ]
+            }
+        ],
 
-    message = HumanMessage(content=[
-        {"type": "text", "text": prompt},
-        {"type": "image_url",
-         "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}}
-    ])
+        temperature=0.1,
+        max_tokens=1024
+    )
 
-    response = model.invoke([message])
-    return response.content
-
+    return completion.choices[0].message.content
 
 # ===== التابات =====
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -77,61 +98,113 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 # ===== الروشتات =====
 with tab1:
-    rx_file = st.file_uploader("ارفع صورة الروشتة", type=["jpg", "png", "jpeg"])
+
+    rx_file = st.file_uploader(
+        "ارفع صورة الروشتة",
+        type=["jpg", "jpeg", "png"]
+    )
+
     if rx_file and st.button("تحليل الروشتة"):
-        with st.spinner("جارى التحليل..."):
+
+        with st.spinner("جارى تحليل الروشتة..."):
+
             prompt = """
-            أنت صيدلي مصري خبير.
-            اقرأ الروشتة الطبية وحدد:
-            - الأدوية المكتوبة
-            - الاستخدام
+            أنت صيدلي وطبيب مصري خبير.
+
+            اقرأ الروشتة الطبية الموجودة في الصورة وحدد:
+            - أسماء الأدوية
+            - استخدام كل دواء
             - التشخيص المحتمل
-            - نصيحة للمريض
+            - نصائح للمريض
+
             اكتب تقرير منظم باللهجة المصرية.
             """
-            result = ask_vision_model(rx_file, prompt)
+
+            result = ask_vision_model(
+                rx_file,
+                prompt
+            )
+
             st.success(result)
 
 # ===== استفسار طبي =====
 with tab2:
-    question = st.text_input("اسأل عن أي دواء")
+
+    question = st.text_input(
+        "اسأل عن أي دواء أو مرض"
+    )
+
     if question and st.button("بحث"):
+
         with st.spinner("جارى البحث..."):
+
             prompt = f"""
             أنت طبيب وصيدلي مصري خبير.
-            أجب بدقة وبطريقة مبسطة باللهجة المصرية:
+
+            أجب بدقة وبطريقة سهلة وباللهجة المصرية عن السؤال التالي:
+
             {question}
             """
+
             result = ask_text_model(prompt)
+
             st.success(result)
 
 # ===== التعارضات =====
 with tab3:
-    drugs = st.text_area("اكتب الأدوية مفصولة بفاصلة")
+
+    drugs = st.text_area(
+        "اكتب الأدوية مفصولة بفاصلة"
+    )
+
     if drugs and st.button("فحص التعارضات"):
-        with st.spinner("جارى الفحص..."):
+
+        with st.spinner("جارى فحص التفاعلات..."):
+
             prompt = f"""
-            افحص التفاعلات الدوائية بين:
+            افحص التفاعلات الدوائية بين الأدوية التالية:
+
             {drugs}
-            هل يوجد تعارض خطير؟
-            وما البديل المناسب؟
+
+            وضح:
+            - هل يوجد تعارض خطير؟
+            - الأعراض المتوقعة
+            - البديل المناسب
+
             اكتب باللهجة المصرية.
             """
+
             result = ask_text_model(prompt)
+
             st.success(result)
 
 # ===== التحاليل =====
 with tab4:
-    lab_file = st.file_uploader("ارفع صورة التحليل", type=["jpg", "png", "jpeg"])
+
+    lab_file = st.file_uploader(
+        "ارفع صورة التحليل",
+        type=["jpg", "jpeg", "png"]
+    )
+
     if lab_file and st.button("تحليل النتيجة"):
-        with st.spinner("جارى التحليل..."):
+
+        with st.spinner("جارى تحليل النتائج..."):
+
             prompt = """
             أنت طبيب باطني خبير.
-            اقرأ نتيجة التحليل وحدد:
+
+            اقرأ نتيجة التحليل الموجودة في الصورة وحدد:
             - القيم غير الطبيعية
             - التشخيص المحتمل
             - العلاج المقترح
-            اكتب باللهجة المصرية.
+            - نصائح للمريض
+
+            اكتب تقرير منظم باللهجة المصرية.
             """
-            result = ask_vision_model(lab_file, prompt)
+
+            result = ask_vision_model(
+                lab_file,
+                prompt
+            )
+
             st.success(result)
