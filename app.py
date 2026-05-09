@@ -2,12 +2,18 @@ import os
 import streamlit as st
 import numpy as np
 from PIL import Image
+import gc
 
-from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import CharacterTextSplitter
-from langchain_groq import ChatGroq
+# استيراد المكتبات مع معالجة أخطاء الاستيراد
+try:
+    from langchain_community.vectorstores import FAISS
+    from langchain_huggingface import HuggingFaceEmbeddings
+    from langchain_community.document_loaders import PyPDFLoader
+    from langchain.text_splitter import CharacterTextSplitter
+    from langchain_groq import ChatGroq
+except ImportError as e:
+    st.error(f"❌ نقص في المكتبات: {e}. تأكد من ملف requirements.txt وعمل Reboot.")
+    st.stop()
 
 # ====== إعدادات الصفحة ======
 st.set_page_config(
@@ -61,7 +67,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ====== تحميل النموذج اللغوي ======
+# ====== تحميل النموذج اللغوي (Groq) ======
 @st.cache_resource
 def get_llm():
     api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
@@ -75,7 +81,7 @@ def get_llm():
     )
 
 
-# ====== تحميل نموذج الـ Embeddings ======
+# ====== تحميل نموذج الـ Embeddings (خفيف للرامات) ======
 @st.cache_resource
 def get_embeddings():
     return HuggingFaceEmbeddings(
@@ -83,11 +89,20 @@ def get_embeddings():
     )
 
 
-# ====== بناء قاعدة البيانات من ملفات PDF ======
+# ====== بناء أو تحميل قاعدة البيانات ======
 @st.cache_resource
 def get_vector_store():
     embed_model = get_embeddings()
-    # غير الأسماء دي لو ملفاتك مختلفة
+    index_path = "faiss_index"
+
+    # المحاولة الأولى: تحميل الفهرس الجاهز لتوفير الرامات
+    if os.path.exists(index_path):
+        try:
+            return FAISS.load_local(index_path, embed_model, allow_dangerous_deserialization=True)
+        except Exception as e:
+            st.warning(f"⚠️ فشل تحميل الفهرس المحلي، سيتم إعادة بناءه: {e}")
+
+    # المحاولة الثانية: بناء الفهرس من ملفات الـ PDF
     books_list = [
         "Clinical Pharmacology Made Incredibly Easy (3rd Ed.).pdf",
         "Book_2.pdf",
@@ -106,12 +121,22 @@ def get_vector_store():
     if not all_docs:
         return None
 
-    splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    # استخدام تقسيم أكبر لتقليل عدد الـ Chunks في الذاكرة
+    splitter = CharacterTextSplitter(chunk_size=1500, chunk_overlap=150)
     split_docs = splitter.split_documents(all_docs)
-    return FAISS.from_documents(split_docs, embed_model)
+    
+    vector_store = FAISS.from_documents(split_docs, embed_model)
+    
+    # حفظ الفهرس لاستخدامه المرة القادمة
+    try:
+        vector_store.save_local(index_path)
+    except:
+        pass
+        
+    return vector_store
 
 
-# ====== تحميل OCR (تحميل كسول لتقليل استهلاك الرام) ======
+# ====== تحميل OCR (تحميل كسول جداً) ======
 @st.cache_resource
 def get_ocr_reader():
     import easyocr
@@ -120,15 +145,18 @@ def get_ocr_reader():
 
 # ====== دالة الإجابة الذكية ======
 def ask_smart_assistant(llm, vector_store, query):
+    # بحث في الـ 3 نتائج الأكثر صلة فقط لتوفير السياق
     docs = vector_store.similarity_search(query, k=3)
     context = "\n".join([d.page_content for d in docs])
 
     full_prompt = f"""
-    أنت طبيب وصيدلي مصري خبير. استخدم المعلومات الطبية التالية للإجابة:
+    أنت طبيب وصيدلي مصري خبير. استخدم المعلومات الطبية التالية للإجابة بدقة:
     {context}
 
     المطلوب:
     {query}
+    
+    أجب باللهجة المصرية العامية المبسطة.
     """
     response = llm.invoke(full_prompt)
     return response.content
@@ -138,11 +166,11 @@ def ask_smart_assistant(llm, vector_store, query):
 def main():
     llm = get_llm()
 
-    with st.spinner("🧠 جاري تحميل القاعدة الطبية..."):
+    with st.spinner("🧠 جاري تحضير العقل الطبي..."):
         vector_store = get_vector_store()
 
     if not vector_store:
-        st.error("❌ لم يتم العثور على ملفات PDF. تأكد من رفعها داخل الريبو.")
+        st.error("❌ لم يتم العثور على مراجع (PDF). يرجى التأكد من رفع الكتب في نفس المسار.")
         return
 
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -155,94 +183,53 @@ def main():
     # ======= تاب الروشتات =======
     with tab1:
         st.info("💡 ارفع صورة الروشتة:")
-        up_file = st.file_uploader(
-            "صورة الروشتة",
-            type=['jpg', 'png', 'jpeg'],
-            key="rx"
-        )
+        up_file = st.file_uploader("صورة الروشتة", type=['jpg', 'png', 'jpeg'], key="rx")
         if up_file and st.button("🚀 تحليل الروشتة"):
-            with st.spinner("👀 جاري تحميل محرك القراءة..."):
+            with st.spinner("👀 جاري القراءة والتحليل..."):
                 reader = get_ocr_reader()
-            with st.spinner("👀 جاري قراءة الروشتة..."):
                 img = Image.open(up_file)
                 img_np = np.array(img)
                 results = reader.readtext(img_np, detail=0)
                 raw_ocr_text = " ".join(results)
+                
+                # تفريغ الرامات فوراً
+                del img_np
+                gc.collect()
 
-            with st.spinner("🧠 جاري التحليل الطبي..."):
-                q = (
-                    f"النص ده من روشتة مريض: '{raw_ocr_text}'. "
-                    "استنتج الأدوية الصح، استخداماتها، التشخيص، "
-                    "واقترح تحاليل طبية ضرورية لو الحالة تستدعي. "
-                    "اكتب تقرير منظم باللهجة المصرية."
-                )
+                q = f"حلل الروشتة دي: '{raw_ocr_text}'. استخرج الأدوية والتشخيص وانصح المريض."
                 ans = ask_smart_assistant(llm, vector_store, q)
-                st.markdown(
-                    f"<div class='report-card'><h3>🩺 تقرير الروشتة:</h3>{ans}</div>",
-                    unsafe_allow_html=True
-                )
+                st.markdown(f"<div class='report-card'><h3>🩺 تقرير الروشتة:</h3>{ans}</div>", unsafe_allow_html=True)
 
     # ======= تاب الاستفسار الطبي =======
     with tab2:
-        q = st.text_input("اسأل عن أي دواء:")
-        if q and st.button("🔍 بحث"):
-            with st.spinner("📚 جاري البحث في المراجع..."):
-                ans = ask_smart_assistant(
-                    llm,
-                    vector_store,
-                    f"أجب باللهجة المصرية: {q}"
-                )
-                st.markdown(
-                    f"<div class='report-card'>🤖 <b>الإجابة:</b><br>{ans}</div>",
-                    unsafe_allow_html=True
-                )
+        q_text = st.text_input("اسأل عن أي دواء أو حالة:")
+        if q_text and st.button("🔍 بحث"):
+            with st.spinner("📚 جاري مراجعة المراجع..."):
+                ans = ask_smart_assistant(llm, vector_store, q_text)
+                st.markdown(f"<div class='report-card'>🤖 <b>الإجابة:</b><br>{ans}</div>", unsafe_allow_html=True)
 
     # ======= تاب التعارضات =======
     with tab3:
-        st.warning("⚡ أدخل الأدوية لمعرفة التفاعلات الخطيرة.")
-        drugs_input = st.text_area("مثال: Aspirin, Warfarin")
+        drugs_input = st.text_area("أدخل الأدوية (مثال: Aspirin, Warfarin)")
         if drugs_input and st.button("🧪 فحص التعارضات"):
-            with st.spinner("🚨 جاري البحث عن التفاعلات..."):
-                q = (
-                    f"ابحث عن التفاعلات الدوائية بين: {drugs_input}. "
-                    "هل يوجد تعارض خطير؟ وما البديل؟ "
-                    "الرد باللهجة المصرية."
-                )
+            with st.spinner("🚨 جاري فحص التفاعلات..."):
+                q = f"هل يوجد تعارض بين {drugs_input}؟ وما هو البديل الآمن؟"
                 ans = ask_smart_assistant(llm, vector_store, q)
-                st.markdown(
-                    f"<div class='report-card'><h3>⚠️ التفاعلات الدوائية:</h3>{ans}</div>",
-                    unsafe_allow_html=True
-                )
+                st.markdown(f"<div class='report-card'><h3>⚠️ التفاعلات الدوائية:</h3>{ans}</div>", unsafe_allow_html=True)
 
     # ======= تاب التحاليل =======
     with tab4:
-        st.info("🔬 ارفع صورة التحليل لاقتراح العلاج.")
-        lab_file = st.file_uploader(
-            "صورة التحليل",
-            type=['jpg', 'png', 'jpeg'],
-            key="lab"
-        )
-        if lab_file and st.button("🧬 قراءة النتيجة"):
-            with st.spinner("🔍 جاري تحميل محرك القراءة..."):
+        lab_file = st.file_uploader("ارفع صورة التحليل", type=['jpg', 'png', 'jpeg'], key="lab")
+        if lab_file and st.button("🧬 تحليل النتيجة"):
+            with st.spinner("🔍 جاري قراءة التحليل..."):
                 reader = get_ocr_reader()
-            with st.spinner("🔍 جاري تحليل النتائج..."):
                 img = Image.open(lab_file)
-                img_np = np.array(img)
-                results = reader.readtext(img_np, detail=0)
+                results = reader.readtext(np.array(img), detail=0)
                 lab_text = " ".join(results)
-
-            with st.spinner("💡 جاري اقتراح الأدوية..."):
-                q = (
-                    f"هذا نص من نتيجة تحليل: '{lab_text}'. "
-                    "استخرج القيم غير الطبيعية، استنتج التشخيص، "
-                    "واقترح الأدوية العلمية المناسبة للحالة "
-                    "مع نصيحة للمريض باللهجة المصرية."
-                )
+                
+                q = f"حلل نتائج التحليل دي: '{lab_text}'. قول القيم العالية والواطية والتشخيص المقترح."
                 ans = ask_smart_assistant(llm, vector_store, q)
-                st.markdown(
-                    f"<div class='report-card'><h3>🩸 تقرير التحليل والعلاج:</h3>{ans}</div>",
-                    unsafe_allow_html=True
-                )
+                st.markdown(f"<div class='report-card'><h3>🩸 تقرير التحليل:</h3>{ans}</div>", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
