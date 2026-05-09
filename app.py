@@ -37,7 +37,7 @@ def get_text_model():
         temperature=0.1
     )
 
-@@st.cache_resource
+@st.cache_resource
 def get_vision_model():
     return ChatGroq(
         api_key=get_api_key(),
