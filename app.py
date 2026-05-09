@@ -4,15 +4,16 @@ import numpy as np
 from PIL import Image
 import gc
 
-# استيراد المكتبات مع معالجة أخطاء الاستيراد
+# استيراد المكتبات مع تحديث مسارات الـ Text Splitter الجديدة
 try:
     from langchain_community.vectorstores import FAISS
     from langchain_huggingface import HuggingFaceEmbeddings
     from langchain_community.document_loaders import PyPDFLoader
-    from langchain.text_splitter import CharacterTextSplitter
+    from langchain_text_splitters import CharacterTextSplitter # المسار الجديد
     from langchain_groq import ChatGroq
 except ImportError as e:
-    st.error(f"❌ نقص في المكتبات: {e}. تأكد من ملف requirements.txt وعمل Reboot.")
+    st.error(f"❌ خطأ في المكتبات: {e}")
+    st.info("تأكد من تحديث ملف requirements.txt وعمل Reboot للتطبيق من لوحة التحكم.")
     st.stop()
 
 # ====== إعدادات الصفحة ======
@@ -37,200 +38,125 @@ st.markdown("""
         -webkit-text-fill-color: transparent;
         animation: gradient-shift 5s ease infinite;
         text-align: center;
-        font-size: 3.5rem;
+        font-size: 3rem;
         font-weight: 900;
-        margin-bottom: 30px;
+        margin-bottom: 20px;
     }
     .report-card {
-        background: linear-gradient(135deg, #ffffff 0%, #f3f4f6 100%);
-        padding: 25px;
-        border-radius: 20px;
-        border-right: 8px solid #7f00ff;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        background: white;
+        padding: 20px;
+        border-radius: 15px;
+        border-right: 10px solid #7f00ff;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         color: #1a1a1a;
         direction: rtl;
         text-align: right;
-        font-size: 18px;
-        line-height: 1.8;
-        margin-top: 20px;
-    }
-    .stButton>button {
-        background: linear-gradient(90deg, #7f00ff, #ff007f);
-        color: white;
-        border: none;
-        border-radius: 10px;
-        padding: 10px 25px;
-        font-size: 18px;
+        margin-top: 15px;
     }
     </style>
     <h1 class="animated-title">🛸 Drugbrain Intelligence OS 🧬</h1>
 """, unsafe_allow_html=True)
 
-
-# ====== تحميل النموذج اللغوي (Groq) ======
+# ====== الدوال الأساسية مع Caching ======
 @st.cache_resource
 def get_llm():
-    api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
+    api_key = st.secrets.get("GROQ_API_KEY")
     if not api_key:
-        st.error("❌ لم يتم العثور على GROQ_API_KEY. أضفه في Secrets.")
+        st.error("❌ GROQ_API_KEY missing in Secrets!")
         st.stop()
-    return ChatGroq(
-        api_key=api_key,
-        model_name="llama-3.3-70b-versatile",
-        temperature=0.1
-    )
+    return ChatGroq(api_key=api_key, model_name="llama-3.3-70b-versatile", temperature=0.1)
 
-
-# ====== تحميل نموذج الـ Embeddings (خفيف للرامات) ======
 @st.cache_resource
 def get_embeddings():
-    return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-
-# ====== بناء أو تحميل قاعدة البيانات ======
 @st.cache_resource
 def get_vector_store():
     embed_model = get_embeddings()
-    index_path = "faiss_index"
+    index_name = "faiss_index_storage"
+    
+    # محاولة تحميل قاعدة البيانات لو موجودة لتوفير الرامات
+    if os.path.exists(index_name):
+        return FAISS.load_local(index_name, embed_model, allow_dangerous_deserialization=True)
 
-    # المحاولة الأولى: تحميل الفهرس الجاهز لتوفير الرامات
-    if os.path.exists(index_path):
-        try:
-            return FAISS.load_local(index_path, embed_model, allow_dangerous_deserialization=True)
-        except Exception as e:
-            st.warning(f"⚠️ فشل تحميل الفهرس المحلي، سيتم إعادة بناءه: {e}")
-
-    # المحاولة الثانية: بناء الفهرس من ملفات الـ PDF
-    books_list = [
-        "Clinical Pharmacology Made Incredibly Easy (3rd Ed.).pdf",
-        "Book_2.pdf",
-        "Book_3.pdf"
-    ]
-
+    # لو مش موجودة، هنقرأ الكتب (اتأكد إن الأسماء صحيحة في جيت هاب)
+    books = ["Clinical Pharmacology Made Incredibly Easy (3rd Ed.).pdf", "Book_2.pdf", "Book_3.pdf"]
     all_docs = []
-    for path in books_list:
-        if os.path.exists(path):
-            try:
-                loader = PyPDFLoader(path)
-                all_docs.extend(loader.load())
-            except Exception as e:
-                st.warning(f"⚠️ مشكلة في تحميل {path}: {e}")
-
+    
+    for book in books:
+        if os.path.exists(book):
+            loader = PyPDFLoader(book)
+            all_docs.extend(loader.load())
+    
     if not all_docs:
         return None
 
-    # استخدام تقسيم أكبر لتقليل عدد الـ Chunks في الذاكرة
-    splitter = CharacterTextSplitter(chunk_size=1500, chunk_overlap=150)
-    split_docs = splitter.split_documents(all_docs)
+    # تقسيم النصوص
+    text_splitter = CharacterTextSplitter(chunk_size=1200, chunk_overlap=150)
+    docs = text_splitter.split_documents(all_docs)
     
-    vector_store = FAISS.from_documents(split_docs, embed_model)
-    
-    # حفظ الفهرس لاستخدامه المرة القادمة
-    try:
-        vector_store.save_local(index_path)
-    except:
-        pass
-        
+    # بناء الفهرس وحفظه محلياً
+    vector_store = FAISS.from_documents(docs, embed_model)
+    vector_store.save_local(index_name)
     return vector_store
 
-
-# ====== تحميل OCR (تحميل كسول جداً) ======
 @st.cache_resource
-def get_ocr_reader():
+def get_ocr():
     import easyocr
     return easyocr.Reader(['en'], gpu=False)
 
-
-# ====== دالة الإجابة الذكية ======
-def ask_smart_assistant(llm, vector_store, query):
-    # بحث في الـ 3 نتائج الأكثر صلة فقط لتوفير السياق
+def ask_ai(llm, vector_store, query):
     docs = vector_store.similarity_search(query, k=3)
     context = "\n".join([d.page_content for d in docs])
+    prompt = f"استخدم السياق التالي: {context}\n\nأجب على: {query}\n\nاجعل الإجابة طبية دقيقة وباللهجة المصرية."
+    return llm.invoke(prompt).content
 
-    full_prompt = f"""
-    أنت طبيب وصيدلي مصري خبير. استخدم المعلومات الطبية التالية للإجابة بدقة:
-    {context}
-
-    المطلوب:
-    {query}
-    
-    أجب باللهجة المصرية العامية المبسطة.
-    """
-    response = llm.invoke(full_prompt)
-    return response.content
-
-
-# ====== التطبيق الرئيسي ======
+# ====== واجهة المستخدم ======
 def main():
     llm = get_llm()
-
-    with st.spinner("🧠 جاري تحضير العقل الطبي..."):
+    
+    with st.spinner("🧠 جاري تحميل القاعدة الطبية..."):
         vector_store = get_vector_store()
 
     if not vector_store:
-        st.error("❌ لم يتم العثور على مراجع (PDF). يرجى التأكد من رفع الكتب في نفس المسار.")
+        st.error("⚠️ لم يتم العثور على ملفات الـ PDF. ارفع الكتب وتأكد من أسمائها.")
         return
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "👁️ الروشتات",
-        "💬 استفسار طبي",
-        "⚠️ التعارضات",
-        "🩸 التحاليل"
-    ])
+    tabs = st.tabs(["👁️ الروشتات", "💬 استفسار", "⚠️ تعارضات", "🩸 تحاليل"])
 
-    # ======= تاب الروشتات =======
-    with tab1:
-        st.info("💡 ارفع صورة الروشتة:")
-        up_file = st.file_uploader("صورة الروشتة", type=['jpg', 'png', 'jpeg'], key="rx")
-        if up_file and st.button("🚀 تحليل الروشتة"):
-            with st.spinner("👀 جاري القراءة والتحليل..."):
-                reader = get_ocr_reader()
-                img = Image.open(up_file)
-                img_np = np.array(img)
-                results = reader.readtext(img_np, detail=0)
-                raw_ocr_text = " ".join(results)
-                
-                # تفريغ الرامات فوراً
-                del img_np
+    with tabs[0]:
+        file = st.file_uploader("ارفع صورة الروشتة", type=['jpg', 'png', 'jpeg'])
+        if file and st.button("تحليل"):
+            with st.spinner("جاري القراءة..."):
+                reader = get_ocr()
+                img = np.array(Image.open(file))
+                text = " ".join(reader.readtext(img, detail=0))
+                del img # تنظيف رام
                 gc.collect()
-
-                q = f"حلل الروشتة دي: '{raw_ocr_text}'. استخرج الأدوية والتشخيص وانصح المريض."
-                ans = ask_smart_assistant(llm, vector_store, q)
-                st.markdown(f"<div class='report-card'><h3>🩺 تقرير الروشتة:</h3>{ans}</div>", unsafe_allow_html=True)
-
-    # ======= تاب الاستفسار الطبي =======
-    with tab2:
-        q_text = st.text_input("اسأل عن أي دواء أو حالة:")
-        if q_text and st.button("🔍 بحث"):
-            with st.spinner("📚 جاري مراجعة المراجع..."):
-                ans = ask_smart_assistant(llm, vector_store, q_text)
-                st.markdown(f"<div class='report-card'>🤖 <b>الإجابة:</b><br>{ans}</div>", unsafe_allow_html=True)
-
-    # ======= تاب التعارضات =======
-    with tab3:
-        drugs_input = st.text_area("أدخل الأدوية (مثال: Aspirin, Warfarin)")
-        if drugs_input and st.button("🧪 فحص التعارضات"):
-            with st.spinner("🚨 جاري فحص التفاعلات..."):
-                q = f"هل يوجد تعارض بين {drugs_input}؟ وما هو البديل الآمن؟"
-                ans = ask_smart_assistant(llm, vector_store, q)
-                st.markdown(f"<div class='report-card'><h3>⚠️ التفاعلات الدوائية:</h3>{ans}</div>", unsafe_allow_html=True)
-
-    # ======= تاب التحاليل =======
-    with tab4:
-        lab_file = st.file_uploader("ارفع صورة التحليل", type=['jpg', 'png', 'jpeg'], key="lab")
-        if lab_file and st.button("🧬 تحليل النتيجة"):
-            with st.spinner("🔍 جاري قراءة التحليل..."):
-                reader = get_ocr_reader()
-                img = Image.open(lab_file)
-                results = reader.readtext(np.array(img), detail=0)
-                lab_text = " ".join(results)
                 
-                q = f"حلل نتائج التحليل دي: '{lab_text}'. قول القيم العالية والواطية والتشخيص المقترح."
-                ans = ask_smart_assistant(llm, vector_store, q)
-                st.markdown(f"<div class='report-card'><h3>🩸 تقرير التحليل:</h3>{ans}</div>", unsafe_allow_html=True)
+                res = ask_ai(llm, vector_store, f"حلل الروشتة دي: {text}")
+                st.markdown(f"<div class='report-card'>{res}</div>", unsafe_allow_html=True)
 
+    with tabs[1]:
+        q = st.text_input("اسأل عن دواء أو مرض:")
+        if q and st.button("بحث"):
+            res = ask_ai(llm, vector_store, q)
+            st.markdown(f"<div class='report-card'>{res}</div>", unsafe_allow_html=True)
+
+    with tabs[2]:
+        drugs = st.text_area("ادخل الأدوية:")
+        if drugs and st.button("فحص"):
+            res = ask_ai(llm, vector_store, f"هل في تعارض بين {drugs}؟")
+            st.markdown(f"<div class='report-card'>{res}</div>", unsafe_allow_html=True)
+
+    with tabs[3]:
+        lab = st.file_uploader("ارفع صورة التحليل", type=['jpg', 'png', 'jpeg'], key="lab_up")
+        if lab and st.button("قراءة التحليل"):
+            with st.spinner("جاري التحليل..."):
+                reader = get_ocr()
+                text = " ".join(reader.readtext(np.array(Image.open(lab)), detail=0))
+                res = ask_ai(llm, vector_store, f"حلل نتائج التحليل دي: {text}")
+                st.markdown(f"<div class='report-card'>{res}</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
