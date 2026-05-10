@@ -135,6 +135,19 @@ st.markdown("""
         background: linear-gradient(90deg, #7f00ff, #ff007f);
         color: white; border-radius: 10px; border: none;
     }
+
+    /* ===== Patient Badge ===== */
+    .patient-badge {
+        background: rgba(127,0,255,0.15);
+        border: 1px solid rgba(127,0,255,0.4);
+        border-radius: 12px;
+        padding: 10px 14px;
+        font-size: 0.85rem;
+        direction: rtl;
+        text-align: right;
+        margin-bottom: 8px;
+        color: inherit;
+    }
     </style>
 
     <!-- Particles -->
@@ -196,11 +209,21 @@ def get_ocr_reader():
     import easyocr
     return easyocr.Reader(['en'], gpu=False, download_enabled=True)
 
-def ask_drugbrain(llm, v_store, query, is_table=False):
+def ask_drugbrain(llm, v_store, query, is_table=False, age=30, weight=70, conditions=[]):
     docs = v_store.similarity_search(query, k=3)
     context = "\n".join([d.page_content for d in docs])
+
+    patient_info = f"المريض عمره {age} سنة، وزنه {weight} كجم."
+    if conditions:
+        patient_info += f" عنده: {', '.join(conditions)}."
+
     table_instr = "\nهام: اعرض الأدوية في جدول Markdown (الدواء | الجرعة | ملاحظات)." if is_table else ""
-    prompt = f"السياق: {context}\nالسؤال: {query}{table_instr}\nأجب باللهجة المصرية العامية كخبير صيدلي."
+
+    prompt = f"""بيانات المريض: {patient_info}
+السياق الطبي: {context}
+السؤال: {query}{table_instr}
+أجب باللهجة المصرية العامية كخبير صيدلي، مع مراعاة بيانات المريض في تحديد الجرعات والتحذيرات."""
+
     result = llm.invoke(prompt).content
     return markdown.markdown(result, extensions=['tables'])
 
@@ -210,13 +233,32 @@ def main():
     st.session_state.session_uses += 1
     if st.session_state.session_uses % 5 == 0: gc.collect()
 
+    # ===== Sidebar =====
     with st.sidebar:
+        st.header("👤 بيانات المريض")
+        age = st.number_input("العمر (سنة)", min_value=1, max_value=120, value=30)
+        weight = st.number_input("الوزن (كجم)", min_value=10, max_value=200, value=70)
+        conditions = st.multiselect(
+            "حالات خاصة",
+            ["فشل كلوي", "فشل كبدي", "حمل", "رضاعة", "سكر", "ضغط", "حساسية من البنسلين"]
+        )
+
+        st.divider()
+
         st.header("⚙️ إدارة النظام")
         if st.button("♻️ تنشيط الذاكرة (Reboot)"):
             st.cache_resource.clear()
             gc.collect()
             st.rerun()
         st.info("لو التطبيق تقل معاك، دوس هنا.")
+
+    # إظهار بيانات المريض فوق المحتوى
+    conditions_text = f" | {', '.join(conditions)}" if conditions else ""
+    st.markdown(f"""
+        <div class='patient-badge'>
+        👤 <b>المريض:</b> {age} سنة | {weight} كجم{conditions_text}
+        </div>
+    """, unsafe_allow_html=True)
 
     llm = get_llm()
     v_store = get_vector_store()
@@ -236,19 +278,21 @@ def main():
                 raw_text = " ".join(reader.readtext(img, detail=0))
                 del img; gc.collect()
             with st.spinner("🩺 جاري استخراج الأدوية..."):
-                res = ask_drugbrain(llm, v_store, f"حلل الروشتة دي وطلع الأدوية: {raw_text}", is_table=True)
+                res = ask_drugbrain(llm, v_store, f"حلل الروشتة دي وطلع الأدوية: {raw_text}",
+                                   is_table=True, age=age, weight=weight, conditions=conditions)
                 st.markdown(f"<div class='report-card'><h3>🩺 التقرير</h3>{res}</div>", unsafe_allow_html=True)
 
     with tab2:
         q = st.text_input("اسأل عن أي دواء أو حالة:")
         if q and st.button("🔍 بحث", key="b2"):
-            res = ask_drugbrain(llm, v_store, q)
+            res = ask_drugbrain(llm, v_store, q, age=age, weight=weight, conditions=conditions)
             st.markdown(f"<div class='report-card'>{res}</div>", unsafe_allow_html=True)
 
     with tab3:
         drugs = st.text_area("أدخل الأدوية لفحص التفاعلات:")
         if drugs and st.button("🚨 فحص", key="b3"):
-            res = ask_drugbrain(llm, v_store, f"هل فيه تعارض بين: {drugs}؟", is_table=True)
+            res = ask_drugbrain(llm, v_store, f"هل فيه تعارض بين: {drugs}؟",
+                               is_table=True, age=age, weight=weight, conditions=conditions)
             st.markdown(f"<div class='report-card'>{res}</div>", unsafe_allow_html=True)
 
     with tab4:
@@ -259,7 +303,8 @@ def main():
                 raw_lab = " ".join(reader.readtext(np.array(Image.open(f2)), detail=0))
                 gc.collect()
             with st.spinner("🩸 جاري كتابة التقرير..."):
-                res = ask_drugbrain(llm, v_store, f"حلل التحليل ده: {raw_lab}")
+                res = ask_drugbrain(llm, v_store, f"حلل التحليل ده: {raw_lab}",
+                                   age=age, weight=weight, conditions=conditions)
                 st.markdown(f"<div class='report-card'><h3>🩸 نتائج التحليل</h3>{res}</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
