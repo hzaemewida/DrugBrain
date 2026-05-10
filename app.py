@@ -28,6 +28,106 @@ st.markdown("""
     <h1 class="animated-title">🛸 Drugbrain Intelligence OS 🧬</h1>
 """, unsafe_allow_html=True)
 
+# ====== Pharma Matrix Effect ======
+st.markdown("""
+<canvas id="pharma-matrix" style="position:fixed;top:0;left:0;z-index:0;pointer-events:none;"></canvas>
+
+<script>
+(function() {
+  const canvas = document.getElementById('pharma-matrix');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    init();
+  });
+
+  const pharmaWords = [
+    'Amoxicillin','Metformin','Lisinopril','Atorvastatin','Omeprazole',
+    'Paracetamol','Ibuprofen','Warfarin','Aspirin','Diazepam',
+    'Morphine','Insulin','Penicillin','Codeine','Furosemide',
+    'Amlodipine','Ciprofloxacin','Azithromycin','Doxycycline','Tramadol',
+    'C\u2088H\u2089NO\u2082','C\u2081\u2080H\u2081\u2083N\u2085O\u2084','NaCl','C\u2082H\u2085OH','H\u2082O\u2082',
+    'C\u2081\u2086H\u2081\u2089N\u2083O\u2085S','CH\u2083COOH','C\u2089H\u2088O\u2084','C\u2081\u2087H\u2081\u2089NO\u2083','NH\u2083',
+    'C\u2086H\u2081\u2082O\u2086','HCl','NaHCO\u2083','KCl',
+    'Dopamine','Serotonin','Cortisol','Adrenaline','Melatonin',
+    'DNA','RNA','ATP','ADP','GABA'
+  ];
+
+  const fontSize = 13;
+  const colorThemes = [
+    {r:0,   g:255, b:150},
+    {r:127, g:0,   b:255},
+    {r:0,   g:210, b:255},
+    {r:255, g:0,   b:127},
+  ];
+
+  let columns, drops, dropWords, dropSpeeds, dropOpacities, colTheme;
+
+  function init() {
+    columns = Math.floor(canvas.width / (fontSize * 8));
+    drops = []; dropWords = []; dropSpeeds = []; dropOpacities = []; colTheme = [];
+    for (let i = 0; i < columns; i++) {
+      drops[i]         = Math.random() * -canvas.height;
+      dropWords[i]     = pharmaWords[Math.floor(Math.random() * pharmaWords.length)];
+      dropSpeeds[i]    = 0.3 + Math.random() * 0.7;
+      dropOpacities[i] = 0.03 + Math.random() * 0.12;
+      colTheme[i]      = colorThemes[Math.floor(Math.random() * colorThemes.length)];
+    }
+  }
+
+  init();
+
+  function draw() {
+    ctx.fillStyle = 'rgba(0,0,0,0.04)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.font = fontSize + "px 'Courier New', monospace";
+
+    for (let i = 0; i < columns; i++) {
+      const word  = dropWords[i];
+      const x     = i * (fontSize * 8);
+      const y     = drops[i];
+      const theme = colTheme[i];
+      const op    = dropOpacities[i];
+
+      for (let j = 0; j < word.length; j++) {
+        const charY = y + j * (fontSize + 2);
+        if (charY < 0 || charY > canvas.height) continue;
+        const brightness = j === 0 ? 1 : Math.max(0.15, 1 - j * 0.1);
+        if (j === 0) {
+          ctx.fillStyle   = 'rgba(255,255,255,' + (op * 6) + ')';
+          ctx.shadowColor = 'rgb(' + theme.r + ',' + theme.g + ',' + theme.b + ')';
+          ctx.shadowBlur  = 8;
+        } else {
+          ctx.fillStyle  = 'rgba(' + theme.r + ',' + theme.g + ',' + theme.b + ',' + (op * brightness * 8) + ')';
+          ctx.shadowBlur = 0;
+        }
+        ctx.fillText(word[j], x, charY);
+      }
+
+      ctx.shadowBlur = 0;
+      drops[i] += dropSpeeds[i] * (fontSize + 2);
+
+      if (drops[i] > canvas.height + word.length * (fontSize + 2)) {
+        drops[i]         = -word.length * (fontSize + 2) * Math.random() * 3;
+        dropWords[i]     = pharmaWords[Math.floor(Math.random() * pharmaWords.length)];
+        dropSpeeds[i]    = 0.3 + Math.random() * 0.7;
+        dropOpacities[i] = 0.03 + Math.random() * 0.12;
+      }
+    }
+    requestAnimationFrame(draw);
+  }
+
+  draw();
+})();
+</script>
+""", unsafe_allow_html=True)
+
 # ====== 2. الدوال الأساسية (Backend) ======
 @st.cache_resource
 def get_llm():
@@ -68,7 +168,6 @@ def get_vector_store():
 @st.cache_resource
 def get_ocr_reader():
     import easyocr
-    # التحميل بيحصل مرة واحدة بس هنا وبنخزنه في الكاش
     return easyocr.Reader(['en'], gpu=False, download_enabled=True)
 
 def ask_drugbrain(llm, v_store, query, is_table=False):
