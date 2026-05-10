@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+import streamlit.components.v1 as components
 import numpy as np
 from PIL import Image
 import gc
@@ -29,23 +30,24 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ====== Pharma Matrix Effect ======
-st.markdown("""
-<canvas id="pharma-matrix" style="position:fixed;top:0;left:0;z-index:0;pointer-events:none;"></canvas>
-
+components.html("""
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  * { margin:0; padding:0; }
+  body { background: transparent; overflow: hidden; }
+  canvas { position: fixed; top: 0; left: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="pharma-matrix"></canvas>
 <script>
-(function() {
   const canvas = document.getElementById('pharma-matrix');
-  if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-
-  window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    init();
-  });
+  canvas.width  = window.screen.width;
+  canvas.height = window.screen.height;
 
   const pharmaWords = [
     'Amoxicillin','Metformin','Lisinopril','Atorvastatin','Omeprazole',
@@ -67,21 +69,16 @@ st.markdown("""
     {r:255, g:0,   b:127},
   ];
 
-  let columns, drops, dropWords, dropSpeeds, dropOpacities, colTheme;
+  const columns = Math.floor(canvas.width / (fontSize * 8));
+  const drops = [], dropWords = [], dropSpeeds = [], dropOpacities = [], colTheme = [];
 
-  function init() {
-    columns = Math.floor(canvas.width / (fontSize * 8));
-    drops = []; dropWords = []; dropSpeeds = []; dropOpacities = []; colTheme = [];
-    for (let i = 0; i < columns; i++) {
-      drops[i]         = Math.random() * -canvas.height;
-      dropWords[i]     = pharmaWords[Math.floor(Math.random() * pharmaWords.length)];
-      dropSpeeds[i]    = 0.3 + Math.random() * 0.7;
-      dropOpacities[i] = 0.03 + Math.random() * 0.12;
-      colTheme[i]      = colorThemes[Math.floor(Math.random() * colorThemes.length)];
-    }
+  for (let i = 0; i < columns; i++) {
+    drops[i]         = Math.random() * -canvas.height;
+    dropWords[i]     = pharmaWords[Math.floor(Math.random() * pharmaWords.length)];
+    dropSpeeds[i]    = 0.3 + Math.random() * 0.7;
+    dropOpacities[i] = 0.03 + Math.random() * 0.12;
+    colTheme[i]      = colorThemes[Math.floor(Math.random() * colorThemes.length)];
   }
-
-  init();
 
   function draw() {
     ctx.fillStyle = 'rgba(0,0,0,0.04)';
@@ -124,9 +121,10 @@ st.markdown("""
   }
 
   draw();
-})();
 </script>
-""", unsafe_allow_html=True)
+</body>
+</html>
+""", height=0)
 
 # ====== 2. الدوال الأساسية (Backend) ======
 @st.cache_resource
@@ -151,7 +149,7 @@ def get_vector_store():
     if os.path.exists(index_path):
         return FAISS.load_local(index_path, embed_model, allow_dangerous_deserialization=True)
     
-    books = ["Clinical Pharmacology Made Incredibly Easy (3rd Ed.).pdf"] # تأكد من وجود الملف
+    books = ["Clinical Pharmacology Made Incredibly Easy (3rd Ed.).pdf"]
     all_docs = []
     for b in books:
         if os.path.exists(b):
@@ -174,13 +172,11 @@ def ask_drugbrain(llm, v_store, query, is_table=False):
     docs = v_store.similarity_search(query, k=3)
     context = "\n".join([d.page_content for d in docs])
     table_instr = "\nهام: اعرض الأدوية في جدول Markdown (الدواء | الجرعة | ملاحظات)." if is_table else ""
-    
     prompt = f"السياق: {context}\nالسؤال: {query}{table_instr}\nأجب باللهجة المصرية العامية كخبير صيدلي."
     return llm.invoke(prompt).content
 
 # ====== 3. واجهة التطبيق (Frontend) ======
 def main():
-    # نظام التنظيف الذاتي
     if 'session_uses' not in st.session_state: st.session_state.session_uses = 0
     st.session_state.session_uses += 1
     if st.session_state.session_uses % 5 == 0: gc.collect()
