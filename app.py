@@ -24,22 +24,18 @@ st.markdown("""
         z-index: 0;
         overflow: hidden;
     }
-
     .particle {
         position: absolute;
         border-radius: 50%;
         opacity: 0;
         animation: float-up linear infinite;
     }
-
     @keyframes float-up {
         0%   { transform: translateY(100vh) scale(0);   opacity: 0; }
         10%  { opacity: 1; }
         90%  { opacity: 0.6; }
         100% { transform: translateY(-10vh) scale(1.2); opacity: 0; }
     }
-
-    /* 20 particles بأحجام وأماكن وسرعات مختلفة */
     .p1  { width:4px;  height:4px;  left:5%;   background:#7f00ff; animation-duration:12s; animation-delay:0s;    }
     .p2  { width:3px;  height:3px;  left:12%;  background:#00d2ff; animation-duration:15s; animation-delay:1.5s;  }
     .p3  { width:5px;  height:5px;  left:20%;  background:#ff007f; animation-duration:10s; animation-delay:3s;    }
@@ -60,10 +56,51 @@ st.markdown("""
     .p18 { width:3px;  height:3px;  left:47%;  background:#00d2ff; animation-duration:17s; animation-delay:2.5s;  }
     .p19 { width:5px;  height:5px;  left:68%;  background:#7f00ff; animation-duration:12s; animation-delay:4s;    }
     .p20 { width:2px;  height:2px;  left:85%;  background:#ff007f; animation-duration:15s; animation-delay:1s;    }
-
-    /* glow على كل نقطة */
     .particle { box-shadow: 0 0 6px 2px currentColor; }
 
+    /* ===== Glassmorphism Report Card ===== */
+    @keyframes card-glow {
+        0%   { border-color: rgba(127, 0, 255, 0.4); box-shadow: 0 8px 32px rgba(127,0,255,0.15), inset 0 0 0 rgba(0,0,0,0); }
+        50%  { border-color: rgba(0, 210, 255, 0.6); box-shadow: 0 8px 32px rgba(0,210,255,0.2),  inset 0 0 0 rgba(0,0,0,0); }
+        100% { border-color: rgba(127, 0, 255, 0.4); box-shadow: 0 8px 32px rgba(127,0,255,0.15), inset 0 0 0 rgba(0,0,0,0); }
+    }
+
+    .report-card {
+        background: rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        padding: 28px;
+        border-radius: 20px;
+        border: 1px solid rgba(127, 0, 255, 0.4);
+        animation: card-glow 4s ease-in-out infinite;
+        color: inherit;
+        direction: rtl;
+        text-align: right;
+        line-height: 1.8;
+        position: relative;
+        z-index: 1;
+        margin-top: 12px;
+    }
+
+    /* شريط علوي بلون gradient */
+    .report-card::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 3px;
+        border-radius: 20px 20px 0 0;
+        background: linear-gradient(90deg, #7f00ff, #00d2ff, #ff007f);
+    }
+
+    .report-card h3 {
+        background: linear-gradient(90deg, #7f00ff, #00d2ff);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 12px;
+        font-size: 1.2rem;
+    }
+
+    /* ===== Title ===== */
     .animated-title {
         background: linear-gradient(270deg, #ff007f, #7f00ff, #00d2ff, #3a7bd5);
         background-size: 400% 400%;
@@ -73,37 +110,25 @@ st.markdown("""
         text-align: center; font-size: 3.2rem; font-weight: 900;
         position: relative; z-index: 1;
     }
-    .report-card {
-        background: white; padding: 25px; border-radius: 15px;
-        border-right: 10px solid #7f00ff; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        color: #1a1a1a; direction: rtl; text-align: right; line-height: 1.6;
-        position: relative; z-index: 1;
+
+    .stButton>button {
+        background: linear-gradient(90deg, #7f00ff, #ff007f);
+        color: white; border-radius: 10px; border: none;
     }
-    .stButton>button { background: linear-gradient(90deg, #7f00ff, #ff007f); color: white; border-radius: 10px; border:none; }
     </style>
 
-    <!-- Particles HTML -->
+    <!-- Particles -->
     <div class="particles-container">
-      <div class="particle p1"></div>
-      <div class="particle p2"></div>
-      <div class="particle p3"></div>
-      <div class="particle p4"></div>
-      <div class="particle p5"></div>
-      <div class="particle p6"></div>
-      <div class="particle p7"></div>
-      <div class="particle p8"></div>
-      <div class="particle p9"></div>
-      <div class="particle p10"></div>
-      <div class="particle p11"></div>
-      <div class="particle p12"></div>
-      <div class="particle p13"></div>
-      <div class="particle p14"></div>
-      <div class="particle p15"></div>
-      <div class="particle p16"></div>
-      <div class="particle p17"></div>
-      <div class="particle p18"></div>
-      <div class="particle p19"></div>
-      <div class="particle p20"></div>
+      <div class="particle p1"></div><div class="particle p2"></div>
+      <div class="particle p3"></div><div class="particle p4"></div>
+      <div class="particle p5"></div><div class="particle p6"></div>
+      <div class="particle p7"></div><div class="particle p8"></div>
+      <div class="particle p9"></div><div class="particle p10"></div>
+      <div class="particle p11"></div><div class="particle p12"></div>
+      <div class="particle p13"></div><div class="particle p14"></div>
+      <div class="particle p15"></div><div class="particle p16"></div>
+      <div class="particle p17"></div><div class="particle p18"></div>
+      <div class="particle p19"></div><div class="particle p20"></div>
     </div>
 
     <h1 class="animated-title">🛸 Drugbrain Intelligence OS 🧬</h1>
@@ -191,7 +216,7 @@ def main():
                 del img; gc.collect()
             with st.spinner("🩺 جاري استخراج الأدوية..."):
                 res = ask_drugbrain(llm, v_store, f"حلل الروشتة دي وطلع الأدوية: {raw_text}", is_table=True)
-                st.markdown(f"<div class='report-card'><h3>🩺 التقرير:</h3>{res}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='report-card'><h3>🩺 التقرير</h3>{res}</div>", unsafe_allow_html=True)
 
     with tab2:
         q = st.text_input("اسأل عن أي دواء أو حالة:")
@@ -214,7 +239,7 @@ def main():
                 gc.collect()
             with st.spinner("🩸 جاري كتابة التقرير..."):
                 res = ask_drugbrain(llm, v_store, f"حلل التحليل ده: {raw_lab}")
-                st.markdown(f"<div class='report-card'><h3>🩸 نتائج التحليل:</h3>{res}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='report-card'><h3>🩸 نتائج التحليل</h3>{res}</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
