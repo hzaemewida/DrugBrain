@@ -59,19 +59,25 @@ st.markdown("""
     .p20 { width:2px;  height:2px;  left:85%;  background:#ff007f; animation-duration:15s; animation-delay:1s;    }
     .particle { box-shadow: 0 0 6px 2px currentColor; }
 
-    /* ===== Glassmorphism Report Card ===== */
+    /* ===== Glassmorphism Report Card - Normal ===== */
     @keyframes card-glow {
-        0%   { border-color: rgba(127, 0, 255, 0.4); box-shadow: 0 8px 32px rgba(127,0,255,0.15); }
-        50%  { border-color: rgba(0, 210, 255, 0.6); box-shadow: 0 8px 32px rgba(0,210,255,0.2);  }
-        100% { border-color: rgba(127, 0, 255, 0.4); box-shadow: 0 8px 32px rgba(127,0,255,0.15); }
+        0%   { border-color: rgba(127,0,255,0.4); box-shadow: 0 8px 32px rgba(127,0,255,0.15); }
+        50%  { border-color: rgba(0,210,255,0.6); box-shadow: 0 8px 32px rgba(0,210,255,0.2);  }
+        100% { border-color: rgba(127,0,255,0.4); box-shadow: 0 8px 32px rgba(127,0,255,0.15); }
     }
+    @keyframes card-glow-warning {
+        0%   { border-color: rgba(255,50,50,0.6); box-shadow: 0 8px 32px rgba(255,50,50,0.3); }
+        50%  { border-color: rgba(255,150,0,0.8); box-shadow: 0 8px 32px rgba(255,150,0,0.4); }
+        100% { border-color: rgba(255,50,50,0.6); box-shadow: 0 8px 32px rgba(255,50,50,0.3); }
+    }
+
     .report-card {
-        background: rgba(255, 255, 255, 0.08);
+        background: rgba(255,255,255,0.08);
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
         padding: 28px;
         border-radius: 20px;
-        border: 1px solid rgba(127, 0, 255, 0.4);
+        border: 1px solid rgba(127,0,255,0.4);
         animation: card-glow 4s ease-in-out infinite;
         color: inherit;
         direction: rtl;
@@ -97,14 +103,45 @@ st.markdown("""
         font-size: 1.2rem;
     }
 
+    /* ===== Warning Card ===== */
+    .report-card-warning {
+        background: rgba(255,50,50,0.08);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        padding: 28px;
+        border-radius: 20px;
+        border: 1px solid rgba(255,50,50,0.6);
+        animation: card-glow-warning 2s ease-in-out infinite;
+        color: inherit;
+        direction: rtl;
+        text-align: right;
+        line-height: 1.8;
+        position: relative;
+        z-index: 1;
+        margin-top: 12px;
+    }
+    .report-card-warning::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 3px;
+        border-radius: 20px 20px 0 0;
+        background: linear-gradient(90deg, #ff3232, #ff9600, #ff3232);
+    }
+    .report-card-warning h3 {
+        color: #ff4444;
+        margin-bottom: 12px;
+        font-size: 1.2rem;
+    }
+
     /* ===== Table Styling ===== */
-    .report-card table {
+    .report-card table, .report-card-warning table {
         width: 100%;
         border-collapse: collapse;
         margin-top: 12px;
         direction: rtl;
     }
-    .report-card th {
+    .report-card th, .report-card-warning th {
         background: linear-gradient(90deg, rgba(127,0,255,0.3), rgba(0,210,255,0.3));
         color: inherit;
         padding: 10px 14px;
@@ -112,14 +149,17 @@ st.markdown("""
         font-weight: 700;
         border-bottom: 2px solid rgba(127,0,255,0.5);
     }
-    .report-card td {
+    .report-card-warning th {
+        background: linear-gradient(90deg, rgba(255,50,50,0.3), rgba(255,150,0,0.3));
+        border-bottom: 2px solid rgba(255,50,50,0.5);
+    }
+    .report-card td, .report-card-warning td {
         padding: 9px 14px;
         text-align: right;
         border-bottom: 1px solid rgba(255,255,255,0.08);
     }
-    .report-card tr:hover td {
-        background: rgba(127,0,255,0.08);
-    }
+    .report-card tr:hover td { background: rgba(127,0,255,0.08); }
+    .report-card-warning tr:hover td { background: rgba(255,50,50,0.08); }
 
     /* ===== Title ===== */
     .animated-title {
@@ -209,6 +249,17 @@ def get_ocr_reader():
     import easyocr
     return easyocr.Reader(['en'], gpu=False, download_enabled=True)
 
+# كلمات التحذير
+WARNING_KEYWORDS = [
+    "خطر", "خطير", "ممنوع", "تحذير", "تفاعل خطير",
+    "contraindicated", "dangerous", "warning", "severe",
+    "نزيف", "مميت", "احذر", "لا يجوز", "يُمنع"
+]
+
+def is_warning(text):
+    text_lower = text.lower()
+    return any(kw in text_lower for kw in WARNING_KEYWORDS)
+
 def ask_drugbrain(llm, v_store, query, is_table=False, age=30, weight=70, conditions=[]):
     docs = v_store.similarity_search(query, k=3)
     context = "\n".join([d.page_content for d in docs])
@@ -225,7 +276,13 @@ def ask_drugbrain(llm, v_store, query, is_table=False, age=30, weight=70, condit
 أجب باللهجة المصرية العامية كخبير صيدلي، مع مراعاة بيانات المريض في تحديد الجرعات والتحذيرات."""
 
     result = llm.invoke(prompt).content
-    return markdown.markdown(result, extensions=['tables'])
+    html = markdown.markdown(result, extensions=['tables'])
+    return html, is_warning(result)
+
+def show_result(html, warning, title=None):
+    card_class = "report-card-warning" if warning else "report-card"
+    title_html = f"<h3>{'⚠️ ' if warning else ''}{title}</h3>" if title else ""
+    st.markdown(f"<div class='{card_class}'>{title_html}{html}</div>", unsafe_allow_html=True)
 
 # ====== 3. واجهة التطبيق (Frontend) ======
 def main():
@@ -242,9 +299,7 @@ def main():
             "حالات خاصة",
             ["فشل كلوي", "فشل كبدي", "حمل", "رضاعة", "سكر", "ضغط", "حساسية من البنسلين"]
         )
-
         st.divider()
-
         st.header("⚙️ إدارة النظام")
         if st.button("♻️ تنشيط الذاكرة (Reboot)"):
             st.cache_resource.clear()
@@ -252,7 +307,7 @@ def main():
             st.rerun()
         st.info("لو التطبيق تقل معاك، دوس هنا.")
 
-    # إظهار بيانات المريض فوق المحتوى
+    # Patient Badge
     conditions_text = f" | {', '.join(conditions)}" if conditions else ""
     st.markdown(f"""
         <div class='patient-badge'>
@@ -278,22 +333,22 @@ def main():
                 raw_text = " ".join(reader.readtext(img, detail=0))
                 del img; gc.collect()
             with st.spinner("🩺 جاري استخراج الأدوية..."):
-                res = ask_drugbrain(llm, v_store, f"حلل الروشتة دي وطلع الأدوية: {raw_text}",
-                                   is_table=True, age=age, weight=weight, conditions=conditions)
-                st.markdown(f"<div class='report-card'><h3>🩺 التقرير</h3>{res}</div>", unsafe_allow_html=True)
+                html, warning = ask_drugbrain(llm, v_store, f"حلل الروشتة دي وطلع الأدوية: {raw_text}",
+                                              is_table=True, age=age, weight=weight, conditions=conditions)
+                show_result(html, warning, "🩺 التقرير")
 
     with tab2:
         q = st.text_input("اسأل عن أي دواء أو حالة:")
         if q and st.button("🔍 بحث", key="b2"):
-            res = ask_drugbrain(llm, v_store, q, age=age, weight=weight, conditions=conditions)
-            st.markdown(f"<div class='report-card'>{res}</div>", unsafe_allow_html=True)
+            html, warning = ask_drugbrain(llm, v_store, q, age=age, weight=weight, conditions=conditions)
+            show_result(html, warning)
 
     with tab3:
         drugs = st.text_area("أدخل الأدوية لفحص التفاعلات:")
         if drugs and st.button("🚨 فحص", key="b3"):
-            res = ask_drugbrain(llm, v_store, f"هل فيه تعارض بين: {drugs}؟",
-                               is_table=True, age=age, weight=weight, conditions=conditions)
-            st.markdown(f"<div class='report-card'>{res}</div>", unsafe_allow_html=True)
+            html, warning = ask_drugbrain(llm, v_store, f"هل فيه تعارض بين: {drugs}؟",
+                                          is_table=True, age=age, weight=weight, conditions=conditions)
+            show_result(html, warning)
 
     with tab4:
         f2 = st.file_uploader("ارفع صورة التحليل:", type=['jpg','png','jpeg'], key="lab")
@@ -303,9 +358,9 @@ def main():
                 raw_lab = " ".join(reader.readtext(np.array(Image.open(f2)), detail=0))
                 gc.collect()
             with st.spinner("🩸 جاري كتابة التقرير..."):
-                res = ask_drugbrain(llm, v_store, f"حلل التحليل ده: {raw_lab}",
-                                   age=age, weight=weight, conditions=conditions)
-                st.markdown(f"<div class='report-card'><h3>🩸 نتائج التحليل</h3>{res}</div>", unsafe_allow_html=True)
+                html, warning = ask_drugbrain(llm, v_store, f"حلل التحليل ده: {raw_lab}",
+                                              age=age, weight=weight, conditions=conditions)
+                show_result(html, warning, "🩸 نتائج التحليل")
 
 if __name__ == "__main__":
     main()
