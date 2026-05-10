@@ -1,6 +1,5 @@
 import os
 import streamlit as st
-import streamlit.components.v1 as components
 import numpy as np
 from PIL import Image
 import gc
@@ -10,7 +9,61 @@ st.set_page_config(page_title="Drugbrain Intelligence OS", layout="wide", page_i
 
 st.markdown("""
     <style>
-    @keyframes gradient-shift { 0% {background-position:0% 50%} 50% {background-position:100% 50%} 100% {background-position:0% 50%} }
+    @keyframes gradient-shift {
+        0%   { background-position: 0% 50%; }
+        50%  { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+
+    /* ===== Floating Particles ===== */
+    .particles-container {
+        position: fixed;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        pointer-events: none;
+        z-index: 0;
+        overflow: hidden;
+    }
+
+    .particle {
+        position: absolute;
+        border-radius: 50%;
+        opacity: 0;
+        animation: float-up linear infinite;
+    }
+
+    @keyframes float-up {
+        0%   { transform: translateY(100vh) scale(0);   opacity: 0; }
+        10%  { opacity: 1; }
+        90%  { opacity: 0.6; }
+        100% { transform: translateY(-10vh) scale(1.2); opacity: 0; }
+    }
+
+    /* 20 particles بأحجام وأماكن وسرعات مختلفة */
+    .p1  { width:4px;  height:4px;  left:5%;   background:#7f00ff; animation-duration:12s; animation-delay:0s;    }
+    .p2  { width:3px;  height:3px;  left:12%;  background:#00d2ff; animation-duration:15s; animation-delay:1.5s;  }
+    .p3  { width:5px;  height:5px;  left:20%;  background:#ff007f; animation-duration:10s; animation-delay:3s;    }
+    .p4  { width:2px;  height:2px;  left:28%;  background:#7f00ff; animation-duration:18s; animation-delay:0.5s;  }
+    .p5  { width:4px;  height:4px;  left:35%;  background:#00d2ff; animation-duration:13s; animation-delay:2s;    }
+    .p6  { width:3px;  height:3px;  left:42%;  background:#7f00ff; animation-duration:16s; animation-delay:4s;    }
+    .p7  { width:6px;  height:6px;  left:50%;  background:#00d2ff; animation-duration:11s; animation-delay:1s;    }
+    .p8  { width:2px;  height:2px;  left:57%;  background:#ff007f; animation-duration:14s; animation-delay:2.5s;  }
+    .p9  { width:4px;  height:4px;  left:63%;  background:#7f00ff; animation-duration:17s; animation-delay:0s;    }
+    .p10 { width:3px;  height:3px;  left:70%;  background:#00d2ff; animation-duration:12s; animation-delay:3.5s;  }
+    .p11 { width:5px;  height:5px;  left:76%;  background:#7f00ff; animation-duration:15s; animation-delay:1s;    }
+    .p12 { width:2px;  height:2px;  left:82%;  background:#ff007f; animation-duration:10s; animation-delay:4.5s;  }
+    .p13 { width:4px;  height:4px;  left:88%;  background:#00d2ff; animation-duration:13s; animation-delay:2s;    }
+    .p14 { width:3px;  height:3px;  left:93%;  background:#7f00ff; animation-duration:16s; animation-delay:0.5s;  }
+    .p15 { width:5px;  height:5px;  left:8%;   background:#00d2ff; animation-duration:19s; animation-delay:5s;    }
+    .p16 { width:2px;  height:2px;  left:17%;  background:#ff007f; animation-duration:11s; animation-delay:1.5s;  }
+    .p17 { width:4px;  height:4px;  left:32%;  background:#7f00ff; animation-duration:14s; animation-delay:3s;    }
+    .p18 { width:3px;  height:3px;  left:47%;  background:#00d2ff; animation-duration:17s; animation-delay:2.5s;  }
+    .p19 { width:5px;  height:5px;  left:68%;  background:#7f00ff; animation-duration:12s; animation-delay:4s;    }
+    .p20 { width:2px;  height:2px;  left:85%;  background:#ff007f; animation-duration:15s; animation-delay:1s;    }
+
+    /* glow على كل نقطة */
+    .particle { box-shadow: 0 0 6px 2px currentColor; }
+
     .animated-title {
         background: linear-gradient(270deg, #ff007f, #7f00ff, #00d2ff, #3a7bd5);
         background-size: 400% 400%;
@@ -18,113 +71,43 @@ st.markdown("""
         -webkit-text-fill-color: transparent;
         animation: gradient-shift 5s ease infinite;
         text-align: center; font-size: 3.2rem; font-weight: 900;
+        position: relative; z-index: 1;
     }
     .report-card {
-        background: white; padding: 25px; border-radius: 15px; 
-        border-right: 10px solid #7f00ff; box-shadow: 0 4px 15px rgba(0,0,0,0.1); 
+        background: white; padding: 25px; border-radius: 15px;
+        border-right: 10px solid #7f00ff; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         color: #1a1a1a; direction: rtl; text-align: right; line-height: 1.6;
+        position: relative; z-index: 1;
     }
     .stButton>button { background: linear-gradient(90deg, #7f00ff, #ff007f); color: white; border-radius: 10px; border:none; }
     </style>
+
+    <!-- Particles HTML -->
+    <div class="particles-container">
+      <div class="particle p1"></div>
+      <div class="particle p2"></div>
+      <div class="particle p3"></div>
+      <div class="particle p4"></div>
+      <div class="particle p5"></div>
+      <div class="particle p6"></div>
+      <div class="particle p7"></div>
+      <div class="particle p8"></div>
+      <div class="particle p9"></div>
+      <div class="particle p10"></div>
+      <div class="particle p11"></div>
+      <div class="particle p12"></div>
+      <div class="particle p13"></div>
+      <div class="particle p14"></div>
+      <div class="particle p15"></div>
+      <div class="particle p16"></div>
+      <div class="particle p17"></div>
+      <div class="particle p18"></div>
+      <div class="particle p19"></div>
+      <div class="particle p20"></div>
+    </div>
+
     <h1 class="animated-title">🛸 Drugbrain Intelligence OS 🧬</h1>
 """, unsafe_allow_html=True)
-
-# ====== Pharma Matrix Effect ======
-components.html("""
-<!DOCTYPE html>
-<html>
-<head>
-<style>
-  * { margin:0; padding:0; }
-  body { background: transparent; overflow: hidden; }
-  canvas { position: fixed; top: 0; left: 0; pointer-events: none; }
-</style>
-</head>
-<body>
-<canvas id="pharma-matrix"></canvas>
-<script>
-  const canvas = document.getElementById('pharma-matrix');
-  const ctx = canvas.getContext('2d');
-
-  canvas.width  = window.screen.width;
-  canvas.height = window.screen.height;
-
-  const pharmaWords = [
-    'Amoxicillin','Metformin','Lisinopril','Atorvastatin','Omeprazole',
-    'Paracetamol','Ibuprofen','Warfarin','Aspirin','Diazepam',
-    'Morphine','Insulin','Penicillin','Codeine','Furosemide',
-    'Amlodipine','Ciprofloxacin','Azithromycin','Doxycycline','Tramadol',
-    'C\u2088H\u2089NO\u2082','C\u2081\u2080H\u2081\u2083N\u2085O\u2084','NaCl','C\u2082H\u2085OH','H\u2082O\u2082',
-    'C\u2081\u2086H\u2081\u2089N\u2083O\u2085S','CH\u2083COOH','C\u2089H\u2088O\u2084','C\u2081\u2087H\u2081\u2089NO\u2083','NH\u2083',
-    'C\u2086H\u2081\u2082O\u2086','HCl','NaHCO\u2083','KCl',
-    'Dopamine','Serotonin','Cortisol','Adrenaline','Melatonin',
-    'DNA','RNA','ATP','ADP','GABA'
-  ];
-
-  const fontSize = 13;
-  const colorThemes = [
-    {r:0,   g:255, b:150},
-    {r:127, g:0,   b:255},
-    {r:0,   g:210, b:255},
-    {r:255, g:0,   b:127},
-  ];
-
-  const columns = Math.floor(canvas.width / (fontSize * 8));
-  const drops = [], dropWords = [], dropSpeeds = [], dropOpacities = [], colTheme = [];
-
-  for (let i = 0; i < columns; i++) {
-    drops[i]         = Math.random() * -canvas.height;
-    dropWords[i]     = pharmaWords[Math.floor(Math.random() * pharmaWords.length)];
-    dropSpeeds[i]    = 0.3 + Math.random() * 0.7;
-    dropOpacities[i] = 0.03 + Math.random() * 0.12;
-    colTheme[i]      = colorThemes[Math.floor(Math.random() * colorThemes.length)];
-  }
-
-  function draw() {
-    ctx.fillStyle = 'rgba(0,0,0,0.04)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.font = fontSize + "px 'Courier New', monospace";
-
-    for (let i = 0; i < columns; i++) {
-      const word  = dropWords[i];
-      const x     = i * (fontSize * 8);
-      const y     = drops[i];
-      const theme = colTheme[i];
-      const op    = dropOpacities[i];
-
-      for (let j = 0; j < word.length; j++) {
-        const charY = y + j * (fontSize + 2);
-        if (charY < 0 || charY > canvas.height) continue;
-        const brightness = j === 0 ? 1 : Math.max(0.15, 1 - j * 0.1);
-        if (j === 0) {
-          ctx.fillStyle   = 'rgba(255,255,255,' + (op * 6) + ')';
-          ctx.shadowColor = 'rgb(' + theme.r + ',' + theme.g + ',' + theme.b + ')';
-          ctx.shadowBlur  = 8;
-        } else {
-          ctx.fillStyle  = 'rgba(' + theme.r + ',' + theme.g + ',' + theme.b + ',' + (op * brightness * 8) + ')';
-          ctx.shadowBlur = 0;
-        }
-        ctx.fillText(word[j], x, charY);
-      }
-
-      ctx.shadowBlur = 0;
-      drops[i] += dropSpeeds[i] * (fontSize + 2);
-
-      if (drops[i] > canvas.height + word.length * (fontSize + 2)) {
-        drops[i]         = -word.length * (fontSize + 2) * Math.random() * 3;
-        dropWords[i]     = pharmaWords[Math.floor(Math.random() * pharmaWords.length)];
-        dropSpeeds[i]    = 0.3 + Math.random() * 0.7;
-        dropOpacities[i] = 0.03 + Math.random() * 0.12;
-      }
-    }
-    requestAnimationFrame(draw);
-  }
-
-  draw();
-</script>
-</body>
-</html>
-""", height=0)
 
 # ====== 2. الدوال الأساسية (Backend) ======
 @st.cache_resource
@@ -142,22 +125,22 @@ def get_vector_store():
     from langchain_community.vectorstores import FAISS
     from langchain_community.document_loaders import PyPDFLoader
     from langchain_text_splitters import CharacterTextSplitter
-    
+
     embed_model = get_embeddings()
     index_path = "faiss_index_v3"
-    
+
     if os.path.exists(index_path):
         return FAISS.load_local(index_path, embed_model, allow_dangerous_deserialization=True)
-    
+
     books = ["Clinical Pharmacology Made Incredibly Easy (3rd Ed.).pdf"]
     all_docs = []
     for b in books:
         if os.path.exists(b):
             loader = PyPDFLoader(b)
             all_docs.extend(loader.load())
-    
+
     if not all_docs: return None
-    
+
     splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     v_store = FAISS.from_documents(splitter.split_documents(all_docs), embed_model)
     v_store.save_local(index_path)
@@ -191,7 +174,7 @@ def main():
 
     llm = get_llm()
     v_store = get_vector_store()
-    
+
     if not v_store:
         st.error("⚠️ المراجع الطبية (PDF) مش موجودة في الـ GitHub.")
         return
