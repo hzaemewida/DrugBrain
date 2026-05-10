@@ -1,4 +1,5 @@
 import os
+import markdown
 import streamlit as st
 import numpy as np
 from PIL import Image
@@ -60,11 +61,10 @@ st.markdown("""
 
     /* ===== Glassmorphism Report Card ===== */
     @keyframes card-glow {
-        0%   { border-color: rgba(127, 0, 255, 0.4); box-shadow: 0 8px 32px rgba(127,0,255,0.15), inset 0 0 0 rgba(0,0,0,0); }
-        50%  { border-color: rgba(0, 210, 255, 0.6); box-shadow: 0 8px 32px rgba(0,210,255,0.2),  inset 0 0 0 rgba(0,0,0,0); }
-        100% { border-color: rgba(127, 0, 255, 0.4); box-shadow: 0 8px 32px rgba(127,0,255,0.15), inset 0 0 0 rgba(0,0,0,0); }
+        0%   { border-color: rgba(127, 0, 255, 0.4); box-shadow: 0 8px 32px rgba(127,0,255,0.15); }
+        50%  { border-color: rgba(0, 210, 255, 0.6); box-shadow: 0 8px 32px rgba(0,210,255,0.2);  }
+        100% { border-color: rgba(127, 0, 255, 0.4); box-shadow: 0 8px 32px rgba(127,0,255,0.15); }
     }
-
     .report-card {
         background: rgba(255, 255, 255, 0.08);
         backdrop-filter: blur(16px);
@@ -81,8 +81,6 @@ st.markdown("""
         z-index: 1;
         margin-top: 12px;
     }
-
-    /* شريط علوي بلون gradient */
     .report-card::before {
         content: '';
         position: absolute;
@@ -91,13 +89,36 @@ st.markdown("""
         border-radius: 20px 20px 0 0;
         background: linear-gradient(90deg, #7f00ff, #00d2ff, #ff007f);
     }
-
     .report-card h3 {
         background: linear-gradient(90deg, #7f00ff, #00d2ff);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         margin-bottom: 12px;
         font-size: 1.2rem;
+    }
+
+    /* ===== Table Styling ===== */
+    .report-card table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+        direction: rtl;
+    }
+    .report-card th {
+        background: linear-gradient(90deg, rgba(127,0,255,0.3), rgba(0,210,255,0.3));
+        color: inherit;
+        padding: 10px 14px;
+        text-align: right;
+        font-weight: 700;
+        border-bottom: 2px solid rgba(127,0,255,0.5);
+    }
+    .report-card td {
+        padding: 9px 14px;
+        text-align: right;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .report-card tr:hover td {
+        background: rgba(127,0,255,0.08);
     }
 
     /* ===== Title ===== */
@@ -110,7 +131,6 @@ st.markdown("""
         text-align: center; font-size: 3.2rem; font-weight: 900;
         position: relative; z-index: 1;
     }
-
     .stButton>button {
         background: linear-gradient(90deg, #7f00ff, #ff007f);
         color: white; border-radius: 10px; border: none;
@@ -181,7 +201,8 @@ def ask_drugbrain(llm, v_store, query, is_table=False):
     context = "\n".join([d.page_content for d in docs])
     table_instr = "\nهام: اعرض الأدوية في جدول Markdown (الدواء | الجرعة | ملاحظات)." if is_table else ""
     prompt = f"السياق: {context}\nالسؤال: {query}{table_instr}\nأجب باللهجة المصرية العامية كخبير صيدلي."
-    return llm.invoke(prompt).content
+    result = llm.invoke(prompt).content
+    return markdown.markdown(result, extensions=['tables'])
 
 # ====== 3. واجهة التطبيق (Frontend) ======
 def main():
