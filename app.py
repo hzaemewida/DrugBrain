@@ -59,7 +59,7 @@ st.markdown("""
     .p20 { width:2px;  height:2px;  left:85%;  background:#ff007f; animation-duration:15s; animation-delay:1s;    }
     .particle { box-shadow: 0 0 6px 2px currentColor; }
 
-    /* ===== Glassmorphism Report Card - Normal ===== */
+    /* ===== Glassmorphism Report Card ===== */
     @keyframes card-glow {
         0%   { border-color: rgba(127,0,255,0.4); box-shadow: 0 8px 32px rgba(127,0,255,0.15); }
         50%  { border-color: rgba(0,210,255,0.6); box-shadow: 0 8px 32px rgba(0,210,255,0.2);  }
@@ -70,7 +70,6 @@ st.markdown("""
         50%  { border-color: rgba(255,150,0,0.8); box-shadow: 0 8px 32px rgba(255,150,0,0.4); }
         100% { border-color: rgba(255,50,50,0.6); box-shadow: 0 8px 32px rgba(255,50,50,0.3); }
     }
-
     .report-card {
         background: rgba(255,255,255,0.08);
         backdrop-filter: blur(16px);
@@ -102,8 +101,6 @@ st.markdown("""
         margin-bottom: 12px;
         font-size: 1.2rem;
     }
-
-    /* ===== Warning Card ===== */
     .report-card-warning {
         background: rgba(255,50,50,0.08);
         backdrop-filter: blur(16px);
@@ -128,34 +125,24 @@ st.markdown("""
         border-radius: 20px 20px 0 0;
         background: linear-gradient(90deg, #ff3232, #ff9600, #ff3232);
     }
-    .report-card-warning h3 {
-        color: #ff4444;
-        margin-bottom: 12px;
-        font-size: 1.2rem;
-    }
+    .report-card-warning h3 { color: #ff4444; margin-bottom: 12px; font-size: 1.2rem; }
 
-    /* ===== Table Styling ===== */
+    /* ===== Tables ===== */
     .report-card table, .report-card-warning table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 12px;
-        direction: rtl;
+        width: 100%; border-collapse: collapse; margin-top: 12px; direction: rtl;
     }
-    .report-card th, .report-card-warning th {
+    .report-card th {
         background: linear-gradient(90deg, rgba(127,0,255,0.3), rgba(0,210,255,0.3));
-        color: inherit;
-        padding: 10px 14px;
-        text-align: right;
-        font-weight: 700;
-        border-bottom: 2px solid rgba(127,0,255,0.5);
+        color: inherit; padding: 10px 14px; text-align: right;
+        font-weight: 700; border-bottom: 2px solid rgba(127,0,255,0.5);
     }
     .report-card-warning th {
         background: linear-gradient(90deg, rgba(255,50,50,0.3), rgba(255,150,0,0.3));
-        border-bottom: 2px solid rgba(255,50,50,0.5);
+        color: inherit; padding: 10px 14px; text-align: right;
+        font-weight: 700; border-bottom: 2px solid rgba(255,50,50,0.5);
     }
     .report-card td, .report-card-warning td {
-        padding: 9px 14px;
-        text-align: right;
+        padding: 9px 14px; text-align: right;
         border-bottom: 1px solid rgba(255,255,255,0.08);
     }
     .report-card tr:hover td { background: rgba(127,0,255,0.08); }
@@ -207,7 +194,7 @@ st.markdown("""
     <h1 class="animated-title">🛸 Drugbrain Intelligence OS 🧬</h1>
 """, unsafe_allow_html=True)
 
-# ====== 2. الدوال الأساسية (Backend) ======
+# ====== 2. الدوال الأساسية ======
 @st.cache_resource
 def get_llm():
     from langchain_groq import ChatGroq
@@ -249,7 +236,13 @@ def get_ocr_reader():
     import easyocr
     return easyocr.Reader(['en'], gpu=False, download_enabled=True)
 
-# كلمات التحذير
+def get_age_category(age):
+    if age < 2:   return "رضيع (أقل من سنتين)"
+    elif age < 12: return "طفل"
+    elif age < 18: return "مراهق"
+    elif age < 65: return "بالغ"
+    else:          return "كبير سن"
+
 WARNING_KEYWORDS = [
     "خطر", "خطير", "ممنوع", "تحذير", "تفاعل خطير",
     "contraindicated", "dangerous", "warning", "severe",
@@ -257,20 +250,23 @@ WARNING_KEYWORDS = [
 ]
 
 def is_warning(text):
-    text_lower = text.lower()
-    return any(kw in text_lower for kw in WARNING_KEYWORDS)
+    return any(kw in text.lower() for kw in WARNING_KEYWORDS)
 
-def ask_drugbrain(llm, v_store, query, is_table=False, age=30, weight=70, conditions=[]):
+def ask_drugbrain(llm, v_store, query, is_table=False, age=30, weight=70, gender="ذكر", conditions=[]):
     docs = v_store.similarity_search(query, k=3)
     context = "\n".join([d.page_content for d in docs])
 
-    patient_info = f"المريض عمره {age} سنة، وزنه {weight} كجم."
+    age_cat = get_age_category(age)
+    patient_info = f"المريض {gender}، فئة عمرية: {age_cat}، عمره {age} سنة، وزنه {weight} كجم."
     if conditions:
         patient_info += f" عنده: {', '.join(conditions)}."
 
+    # تنبيه خاص للأطفال
+    pediatric_note = "\nتنبيه: المريض طفل — احسب الجرعة على أساس الوزن (mg/kg) وكن دقيقاً جداً." if age < 12 else ""
+
     table_instr = "\nهام: اعرض الأدوية في جدول Markdown (الدواء | الجرعة | ملاحظات)." if is_table else ""
 
-    prompt = f"""بيانات المريض: {patient_info}
+    prompt = f"""بيانات المريض: {patient_info}{pediatric_note}
 السياق الطبي: {context}
 السؤال: {query}{table_instr}
 أجب باللهجة المصرية العامية كخبير صيدلي، مع مراعاة بيانات المريض في تحديد الجرعات والتحذيرات."""
@@ -284,7 +280,7 @@ def show_result(html, warning, title=None):
     title_html = f"<h3>{'⚠️ ' if warning else ''}{title}</h3>" if title else ""
     st.markdown(f"<div class='{card_class}'>{title_html}{html}</div>", unsafe_allow_html=True)
 
-# ====== 3. واجهة التطبيق (Frontend) ======
+# ====== 3. واجهة التطبيق ======
 def main():
     if 'session_uses' not in st.session_state: st.session_state.session_uses = 0
     st.session_state.session_uses += 1
@@ -293,12 +289,20 @@ def main():
     # ===== Sidebar =====
     with st.sidebar:
         st.header("👤 بيانات المريض")
-        age = st.number_input("العمر (سنة)", min_value=1, max_value=120, value=30)
-        weight = st.number_input("الوزن (كجم)", min_value=10, max_value=200, value=70)
+
+        gender = st.radio("الجنس", ["ذكر", "أنثى"], horizontal=True)
+        age = st.number_input("العمر (سنة)", min_value=0, max_value=120, value=30)
+        weight = st.number_input("الوزن (كجم)", min_value=1, max_value=200, value=70)
+
+        # الفئة العمرية بتتحدد تلقائياً
+        age_cat = get_age_category(age)
+        st.info(f"الفئة العمرية: **{age_cat}**")
+
         conditions = st.multiselect(
             "حالات خاصة",
             ["فشل كلوي", "فشل كبدي", "حمل", "رضاعة", "سكر", "ضغط", "حساسية من البنسلين"]
         )
+
         st.divider()
         st.header("⚙️ إدارة النظام")
         if st.button("♻️ تنشيط الذاكرة (Reboot)"):
@@ -308,10 +312,11 @@ def main():
         st.info("لو التطبيق تقل معاك، دوس هنا.")
 
     # Patient Badge
+    gender_icon = "👨" if gender == "ذكر" else "👩"
     conditions_text = f" | {', '.join(conditions)}" if conditions else ""
     st.markdown(f"""
         <div class='patient-badge'>
-        👤 <b>المريض:</b> {age} سنة | {weight} كجم{conditions_text}
+        {gender_icon} <b>{gender}</b> | {age_cat} | {age} سنة | {weight} كجم{conditions_text}
         </div>
     """, unsafe_allow_html=True)
 
@@ -334,20 +339,21 @@ def main():
                 del img; gc.collect()
             with st.spinner("🩺 جاري استخراج الأدوية..."):
                 html, warning = ask_drugbrain(llm, v_store, f"حلل الروشتة دي وطلع الأدوية: {raw_text}",
-                                              is_table=True, age=age, weight=weight, conditions=conditions)
+                                              is_table=True, age=age, weight=weight, gender=gender, conditions=conditions)
                 show_result(html, warning, "🩺 التقرير")
 
     with tab2:
         q = st.text_input("اسأل عن أي دواء أو حالة:")
         if q and st.button("🔍 بحث", key="b2"):
-            html, warning = ask_drugbrain(llm, v_store, q, age=age, weight=weight, conditions=conditions)
+            html, warning = ask_drugbrain(llm, v_store, q,
+                                          age=age, weight=weight, gender=gender, conditions=conditions)
             show_result(html, warning)
 
     with tab3:
         drugs = st.text_area("أدخل الأدوية لفحص التفاعلات:")
         if drugs and st.button("🚨 فحص", key="b3"):
             html, warning = ask_drugbrain(llm, v_store, f"هل فيه تعارض بين: {drugs}؟",
-                                          is_table=True, age=age, weight=weight, conditions=conditions)
+                                          is_table=True, age=age, weight=weight, gender=gender, conditions=conditions)
             show_result(html, warning)
 
     with tab4:
@@ -359,7 +365,7 @@ def main():
                 gc.collect()
             with st.spinner("🩸 جاري كتابة التقرير..."):
                 html, warning = ask_drugbrain(llm, v_store, f"حلل التحليل ده: {raw_lab}",
-                                              age=age, weight=weight, conditions=conditions)
+                                              age=age, weight=weight, gender=gender, conditions=conditions)
                 show_result(html, warning, "🩸 نتائج التحليل")
 
 if __name__ == "__main__":
